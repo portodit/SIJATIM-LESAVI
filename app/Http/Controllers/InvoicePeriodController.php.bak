@@ -1,0 +1,1143 @@
+<?php
+
+namespace App\Http\Controllers;
+
+use App\Models\InvoicePeriod;
+use App\Models\InvoiceStep;
+use App\Models\InvoiceStepStatus;
+use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Auth;
+use Illuminate\Validation\Rule;
+
+class InvoicePeriodController extends Controller
+{
+    /**
+     * Display a listing of invoice periods.
+     */
+    public function index(Request $request)
+    {
+        $query = InvoicePeriod::with('creator')
+            ->active()
+            ->orderBy('year', 'desc')
+            ->orderBy('month', 'desc');
+
+        // Filter by year if provided
+        if ($request->filled('year')) {
+            $query->where('year', $request->year);
+        }
+
+        // Filter by status if provided
+        if ($request->filled('status')) {
+            $query->where('status', $request->status);
+        }
+
+        $periods = $query->paginate(10)->withQueryString();
+
+        // Get available years for filter
+        $years = InvoicePeriod::select('year')
+            ->distinct()
+            ->orderBy('year', 'desc')
+            ->pluck('year');
+
+        return view('invoice-periods.index', [
+            'title' => 'Periode Invoice',
+            'subtitle' => 'Kelola folder kerja tagihan Bank Jatim',
+            'periods' => $periods,
+            'years' => $years,
+        ]);
+    }
+
+    /**
+     * Show the form for creating a new invoice period.
+     */
+    public function create()
+    {
+        return view('invoice-periods.create', [
+            'title' => 'Buat Periode Invoice Baru',
+            'subtitle' => 'Mulai periode billing baru',
+        ]);
+    }
+
+    /**
+     * Store a newly created invoice period in storage.
+     */
+    public function store(Request $request)
+    {
+        $request->validate([
+            'period_month' => 'required|integer|between:1,12',
+            'period_year' => 'required|integer|min:2020|max:2100',
+            'notes' => 'nullable|string|max:1000',
+        ], [
+            'period_month.required' => 'Bulan periode wajib dipilih',
+            'period_year.required' => 'Tahun periode wajib diisi',
+            'period_year.min' => 'Tahun minimal adalah 2020',
+        ]);
+
+        // Check if period already exists
+        if (InvoicePeriod::periodExists($request->period_month, $request->period_year)) {
+            $monthName = InvoicePeriod::MONTH_NAMES[$request->period_month];
+            $year = $request->period_year;
+            return back()->withInput()->withErrors([
+                'period_month' => "Periode {$monthName} {$year} sudah ada. Gunakan periode lain atau edit periode yang sudah ada."
+            ]);
+        }
+
+        try {
+            DB::beginTransaction();
+
+            // Generate values
+            $periodCode = InvoicePeriod::generatePeriodCode($request->period_month, $request->period_year);
+            $startDate = InvoicePeriod::generateStartDate($request->period_month, $request->period_year);
+            $endDate = InvoicePeriod::generateEndDate($request->period_month, $request->period_year);
+
+            // Create invoice period
+            $period = InvoicePeriod::create([
+                'period_code' => $periodCode,
+                'month' => $request->period_month,
+                'year' => $request->period_year,
+                'start_date' => $startDate,
+                'end_date' => $endDate,
+                'billing_days' => 30,
+                'status' => InvoicePeriod::STATUS_DRAFT,
+                'current_step_code' => InvoicePeriod::STEP_OVERVIEW,
+                'progress_percentage' => 0,
+                'is_locked' => false,
+                'created_by' => Auth::id(),
+                'notes' => $request->notes,
+            ]);
+
+            // Create step statuses for all active steps
+            $activeSteps = InvoiceStep::where('is_active', true)->orderBy('step_number')->get();
+
+            foreach ($activeSteps as $step) {
+                InvoiceStepStatus::create([
+                    'invoice_period_id' => $period->id,
+                    'invoice_step_id' => $step->id,
+                    'status' => InvoiceStepStatus::STATUS_NOT_STARTED,
+                    'error_count' => 0,
+                    'warning_count' => 0,
+                ]);
+            }
+
+            // Set overview step to in_progress
+            $overviewStep = InvoiceStep::where('step_code', InvoicePeriod::STEP_OVERVIEW)->first();
+            if ($overviewStep) {
+                $overviewStatus = InvoiceStepStatus::where('invoice_period_id', $period->id)
+                    ->where('invoice_step_id', $overviewStep->id)
+                    ->first();
+                if ($overviewStatus) {
+                    $overviewStatus->update([
+                        'status' => InvoiceStepStatus::STATUS_IN_PROGRESS,
+                        'started_at' => now(),
+                    ]);
+                }
+            }
+
+            DB::commit();
+
+            // Redirect to the period detail/show page
+            return redirect()->route('invoice-periods.show', $period)
+                ->with('success', "Periode invoice {$period->period_code} berhasil dibuat!");
+
+        } catch (\Exception $e) {
+            DB::rollBack();
+            return back()->withInput()->withErrors([
+                'error' => 'Gagal membuat periode invoice: ' . $e->getMessage()
+            ]);
+        }
+    }
+
+    /**
+     * Display the specified invoice period.
+     */
+    public function show(InvoicePeriod $invoicePeriod)
+    {
+        $invoicePeriod->load([
+            'creator',
+            'finalizer',
+            'stepStatuses.step',
+        ]);
+
+        // Get steps with their statuses
+        $steps = InvoiceStep::where('is_active', true)
+            ->orderBy('step_number')
+            ->get()
+            ->map(function ($step) use ($invoicePeriod) {
+                $status = $invoicePeriod->stepStatuses->firstWhere('invoice_step_id', $step->id);
+                return [
+                    'step' => $step,
+                    'status' => $status,
+                ];
+            });
+
+        // Calculate progress
+        $totalSteps = $steps->count();
+        $completedSteps = $steps->filter(function ($item) {
+            return $item['status'] && in_array($item['status']->status, [
+                InvoiceStepStatus::STATUS_COMPLETED,
+                InvoiceStepStatus::STATUS_SKIPPED
+            ]);
+        })->count();
+
+        $progressPercentage = $totalSteps > 0 ? round(($completedSteps / $totalSteps) * 100) : 0;
+
+        // Get previous period
+        $previousPeriod = InvoicePeriod::where(function ($query) use ($invoicePeriod) {
+            $query->where('year', '<', $invoicePeriod->year)
+                  ->orWhere(function ($q) use ($invoicePeriod) {
+                      $q->where('year', $invoicePeriod->year)
+                        ->where('month', '<', $invoicePeriod->month);
+                  });
+        })
+        ->where('id', '!=', $invoicePeriod->id)
+        ->orderBy('year', 'desc')
+        ->orderBy('month', 'desc')
+        ->first();
+
+        return view('invoice-periods.show', [
+            'title' => $invoicePeriod->period_code,
+            'subtitle' => 'Periode: ' . $invoicePeriod->period_name,
+            'period' => $invoicePeriod,
+            'steps' => $steps,
+            'progressPercentage' => $progressPercentage,
+            'completedSteps' => $completedSteps,
+            'totalSteps' => $totalSteps,
+            'previousPeriod' => $previousPeriod,
+        ]);
+    }
+
+    /**
+     * Show the form for editing the specified invoice period.
+     */
+    public function edit(InvoicePeriod $invoicePeriod)
+    {
+        if (!$invoicePeriod->canEdit()) {
+            return redirect()->route('invoice-periods.show', $invoicePeriod)
+                ->with('error', 'Periode yang sudah final atau diarsipkan tidak dapat diedit.');
+        }
+
+        return view('invoice-periods.edit', [
+            'title' => 'Edit Periode Invoice',
+            'subtitle' => $invoicePeriod->period_code,
+            'period' => $invoicePeriod,
+        ]);
+    }
+
+    /**
+     * Update the specified invoice period in storage.
+     */
+    public function update(Request $request, InvoicePeriod $invoicePeriod)
+    {
+        if (!$invoicePeriod->canEdit()) {
+            return redirect()->route('invoice-periods.show', $invoicePeriod)
+                ->with('error', 'Periode yang sudah final atau diarsipkan tidak dapat diedit.');
+        }
+
+        $request->validate([
+            'notes' => 'nullable|string|max:1000',
+            'status' => [
+                'required',
+                Rule::in([
+                    InvoicePeriod::STATUS_DRAFT,
+                    InvoicePeriod::STATUS_IN_PROGRESS,
+                    InvoicePeriod::STATUS_VALIDATION,
+                    InvoicePeriod::STATUS_FINALIZED,
+                    InvoicePeriod::STATUS_REVISION,
+                    InvoicePeriod::STATUS_ARCHIVED,
+                ]),
+            ],
+        ]);
+
+        $invoicePeriod->update([
+            'notes' => $request->notes,
+            'status' => $request->status,
+        ]);
+
+        return redirect()->route('invoice-periods.show', $invoicePeriod)
+            ->with('success', 'Periode invoice berhasil diperbarui!');
+    }
+
+    /**
+     * Remove the specified invoice period from storage.
+     */
+    public function destroy(InvoicePeriod $invoicePeriod)
+    {
+        // Can only delete draft periods
+        if ($invoicePeriod->status !== InvoicePeriod::STATUS_DRAFT) {
+            return redirect()->route('invoice-periods.index')
+                ->with('error', 'Hanya periode dengan status Draft yang dapat dihapus.');
+        }
+
+        // Use soft delete
+        $invoicePeriod->delete();
+
+        return redirect()->route('invoice-periods.index')
+            ->with('success', 'Periode invoice berhasil dihapus!');
+    }
+
+    /**
+     * Get step status for AJAX updates
+     */
+    public function step1(InvoicePeriod $invoicePeriod)
+    {
+        $invoicePeriod->load(['stepStatuses.step']);
+
+        // Get office types, location categories, services for dropdowns
+        $officeTypes = \App\Models\OfficeType::active()->ordered()->get();
+        $locationCategories = \App\Models\LocationCategory::active()->ordered()->get();
+        $services = \App\Models\Service::active()->ordered()->get();
+        $bandwidthOptions = \App\Models\BandwidthOption::active()->ordered()->get();
+
+        // Get invoice lines count for this period
+        $invoiceLinesCount = \App\Models\InvoiceLine::where('invoice_period_id', $invoicePeriod->id)->count();
+
+        // Get all bank jatim links (master data)
+        $bankJatimLinks = \App\Models\BankJatimLink::with(['officeType', 'locationCategory', 'service'])
+            ->orderBy('office_type_id')
+            ->orderBy('sequence_in_office_type')
+            ->get();
+
+        // Get current step
+        $currentStep = \App\Models\InvoiceStep::where('step_code', 'ssid_list')->first();
+        $steps = \App\Models\InvoiceStep::where('is_active', true)
+            ->orderBy('step_number')
+            ->get();
+
+        // Get invoice lines with their relations for the table
+        // Urutkan berdasarkan line_number (yang sekarang = sequence_in_office_type dari bank_jatim_links)
+        $invoiceLines = \App\Models\InvoiceLine::where('invoice_period_id', $invoicePeriod->id)
+            ->with(['bankJatimLink.officeType', 'bankJatimLink.locationCategory', 'bankJatimLink.service'])
+            ->orderBy('line_number')
+            ->get()
+            ->map(function($line) {
+                // Format tanggal untuk HTML date input (YYYY-MM-DD)
+                $startDate = null;
+                $bankLink = $line->bankJatimLink;
+                if ($bankLink && $bankLink->service_start_date) {
+                    $startDate = $bankLink->service_start_date instanceof \Carbon\Carbon
+                        ? $bankLink->service_start_date->format('Y-m-d')
+                        : $bankLink->service_start_date;
+                }
+                // SSID untuk new SSID diambil dari ssid_temp
+                $ssid = $bankLink ? $bankLink->ssid : ($line->ssid_temp ?? '-');
+                // Ambil relasi dengan null check
+                $officeType = $bankLink ? ($bankLink->officeType ?? null) : null;
+                $locationCategory = $bankLink ? ($bankLink->locationCategory ?? null) : null;
+                $service = $bankLink ? ($bankLink->service ?? null) : null;
+
+                return [
+                    'id' => $line->id,
+                    'line_number' => $line->line_number,
+                    'ssid' => $ssid,
+                    'office_type' => ['id' => $officeType?->id, 'name' => $officeType?->name ?? '-'],
+                    'location_category' => ['id' => $locationCategory?->id, 'name' => $locationCategory?->name ?? '-'],
+                    'service' => ['id' => $service?->id, 'name' => $service?->name ?? '-'],
+                    'ip_host_telkom' => $bankLink ? $bankLink->ip_host_telkom : '-',
+                    'address' => $bankLink ? $bankLink->address : '-',
+                    'service_start_date' => $startDate,
+                    'is_new_ssid' => $line->is_new_ssid ?? false,
+                ];
+            })
+            ->toArray();
+
+        $stepData = [
+            'officeTypes' => $officeTypes,
+            'locationCategories' => $locationCategories,
+            'services' => $services,
+            'bandwidthOptions' => $bandwidthOptions,
+            'bankJatimLinks' => $bankJatimLinks,
+            'invoiceLines' => $invoiceLines,
+            'invoiceLinesCount' => $invoiceLinesCount,
+            'pendingNewSsidsCount' => \App\Models\InvoiceLine::where('invoice_period_id', $invoicePeriod->id)
+                ->where('is_new_ssid', true)
+                ->whereNull('bank_jatim_link_id')
+                ->count(),
+        ];
+
+        return view('invoice-periods.step', [
+            'title' => 'Sub Tahap 1.1 - Manage SSID List',
+            'subtitle' => $invoicePeriod->period_code,
+            'period' => $invoicePeriod,
+            'currentStep' => $currentStep,
+            'steps' => $steps,
+            'stepData' => $stepData,
+            'invoiceLinesCount' => $invoiceLinesCount,
+        ]);
+    }
+
+    /**
+     * Get paginated SSID data for table
+     */
+    public function getSsidData(Request $request, InvoicePeriod $invoicePeriod)
+    {
+        $perPage = $request->input('per_page', 10);
+        $page = $request->input('page', 1);
+
+        $query = \App\Models\BankJatimLink::with(['officeType', 'locationCategory', 'service', 'currentBandwidth'])
+            ->orderBy('office_type_id')
+            ->orderBy('sequence_in_office_type');
+
+        $total = $query->count();
+        $links = $query->paginate($perPage, ['*'], 'page', $page);
+
+        return response()->json([
+            'success' => true,
+            'data' => $links->items(),
+            'pagination' => [
+                'current_page' => $links->currentPage(),
+                'per_page' => $links->perPage(),
+                'total' => $total,
+                'last_page' => $links->lastPage(),
+                'from' => $links->firstItem(),
+                'to' => $links->lastItem(),
+            ]
+        ]);
+    }
+
+    /**
+     * Download SSID import format (Simple - 1 column SSID)
+     */
+    public function downloadSsidFormat(InvoicePeriod $invoicePeriod)
+    {
+        $csvContent = "SSID\n";
+        $csvContent .= "BANKJTM-KPU-001\n";
+        $csvContent .= "BANKJTM-UTAMA-001\n";
+        $csvContent .= "4700020-38090\n";
+
+        $fileName = 'format_import_ssid_' . $invoicePeriod->period_code . '.csv';
+        $headers = [
+            'Content-Type' => 'text/csv',
+            'Content-Disposition' => 'attachment; filename="' . $fileName . '"',
+            'Cache-Control' => 'no-cache, no-store, must-revalidate',
+            'Pragma' => 'no-cache',
+            'Expires' => '0',
+        ];
+
+        return response($csvContent, 200, $headers);
+    }
+
+    /**
+     * Check SSIDs and AUTO-PROCESS:
+     * - SSID ada di DB, belum di period → AUTO ADD to period snapshot
+     * - SSID ada di DB, sudah di period → SKIP
+     * - SSID TIDAK ada di DB → NEW (need form fill, then auto-add to period)
+     *
+     * Returns only the NEW SSIDs that need to be filled in form
+     */
+    public function checkSsidImport(Request $request, InvoicePeriod $invoicePeriod)
+    {
+        $request->validate([
+            'ssids' => 'required|string',
+        ]);
+
+        // Parse SSIDs from input (comma, newline, or semicolon separated)
+        $inputSsids = preg_split('/[\s,;\n\r]+/', $request->ssids);
+        $inputSsids = array_filter(array_map('trim', $inputSsids));
+        $inputSsids = array_unique($inputSsids);
+
+        if (empty($inputSsids)) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Tidak ada SSID yang valid',
+            ]);
+        }
+
+        // Get existing SSIDs from database
+        $existingLinks = \App\Models\BankJatimLink::whereIn('ssid', $inputSsids)
+            ->with(['officeType', 'locationCategory', 'service'])
+            ->orderBy('office_type_id')
+            ->orderBy('sequence_in_office_type')
+            ->get()
+            ->keyBy('ssid');
+
+        // Get existing invoice lines for this period
+        $existingLines = \App\Models\InvoiceLine::where('invoice_period_id', $invoicePeriod->id)
+            ->pluck('bank_jatim_link_id')
+            ->toArray();
+
+        // Check if there are pending new SSIDs that need to be resolved
+        $pendingNewSsids = \App\Models\InvoiceLine::where('invoice_period_id', $invoicePeriod->id)
+            ->where('is_new_ssid', true)
+            ->where('bank_jatim_link_id', null) // SSID baru yang belum di-resolve
+            ->pluck('ssid_temp')
+            ->filter()
+            ->toArray();
+
+        if (!empty($pendingNewSsids)) {
+            return response()->json([
+                'success' => false,
+                'message' => "Ada " . count($pendingNewSsids) . " SSID baru yang belum diselesaikan. Selesaikan terlebih dahulu sebelum import tambahan.",
+                'pending_ssids' => $pendingNewSsids,
+            ]);
+        }
+
+        // Separate: Found in DB vs NOT in DB
+        $ssidsFoundInDb = $existingLinks->keys()->toArray();
+        $ssidsNotFoundInDb = array_diff($inputSsids, $ssidsFoundInDb);
+
+        $results = [
+            'auto_added_count' => 0,
+            'skipped_count' => 0,
+            'new_ssid_count' => count($ssidsNotFoundInDb),
+            // SSIDs that are NEW (not in DB) - NEED FORM FILL
+            'new_ssids' => [],
+            'skipped_ssids' => [], // Info only
+            'auto_added_ssids' => [], // SSIDs that were successfully auto-added
+            'has_pending_new_ssids' => count($ssidsNotFoundInDb) > 0,
+        ];
+
+        DB::beginTransaction();
+        try {
+            $maxLineNumber = \App\Models\InvoiceLine::where('invoice_period_id', $invoicePeriod->id)->max('line_number') ?? 0;
+
+            // Process SSIDs that exist in DB
+            foreach ($existingLinks as $ssid => $link) {
+                if (in_array($link->id, $existingLines)) {
+                    // Already in this period - skip
+                    $results['skipped_ssids'][] = [
+                        'ssid' => $ssid,
+                        'jenis_kantor' => $link->officeType->name ?? '-',
+                        'kategori' => $link->locationCategory->name ?? '-',
+                        'layanan' => $link->service->name ?? '-',
+                    ];
+                    $results['skipped_count']++;
+                } else {
+                    // NOT in this period - AUTO ADD
+                    $lineNumber = $link->sequence_in_office_type ?? ($maxLineNumber + 1);
+                    $existingLine = \App\Models\InvoiceLine::where('invoice_period_id', $invoicePeriod->id)
+                        ->where('line_number', $lineNumber)
+                        ->first();
+                    if ($existingLine) {
+                        $lineNumber = $maxLineNumber + 1;
+                        $maxLineNumber = $lineNumber;
+                    } else {
+                        $maxLineNumber = max($maxLineNumber, $lineNumber);
+                    }
+
+                    \App\Models\InvoiceLine::create([
+                        'invoice_period_id' => $invoicePeriod->id,
+                        'bank_jatim_link_id' => $link->id,
+                        'line_number' => $lineNumber,
+                        'effective_date' => $invoicePeriod->start_date,
+                        'address_snapshot' => $link->address,
+                        'downtime_days' => 0,
+                        'downtime_hours' => 0,
+                        'downtime_minutes' => 0,
+                        'sla_target' => 99.5,
+                        'restitution_manual' => 0,
+                        'restitution_over_sla' => 0,
+                        'restitution_total' => 0,
+                    ]);
+
+                    $results['auto_added_ssids'][] = [
+                        'ssid' => $ssid,
+                        'jenis_kantor' => $link->officeType->name ?? '-',
+                        'kategori' => $link->locationCategory->name ?? '-',
+                        'layanan' => $link->service->name ?? '-',
+                        'ip_host' => $link->ip_host_telkom ?? '-',
+                    ];
+                    $results['auto_added_count']++;
+                }
+            }
+
+            // Process SSIDs that are NEW (not in DB) - STORE AS PENDING
+            foreach ($ssidsNotFoundInDb as $ssid) {
+                // Create pending entry for new SSID
+                $maxLineNumber++;
+
+                \App\Models\InvoiceLine::create([
+                    'invoice_period_id' => $invoicePeriod->id,
+                    'bank_jatim_link_id' => null, // NULL = belum punya link ke master
+                    'line_number' => $maxLineNumber,
+                    'effective_date' => $invoicePeriod->start_date,
+                    'is_new_ssid' => true,
+                    'ssid_temp' => $ssid,
+                    'address_snapshot' => null,
+                    'downtime_days' => 0,
+                    'downtime_hours' => 0,
+                    'downtime_minutes' => 0,
+                    'sla_target' => 99.5,
+                    'restitution_manual' => 0,
+                    'restitution_over_sla' => 0,
+                    'restitution_total' => 0,
+                ]);
+
+                $results['new_ssids'][] = [
+                    'ssid' => $ssid,
+                    'line_number' => $maxLineNumber,
+                    'jenis_kantor' => '-',
+                    'kategori' => '-',
+                    'layanan' => '-',
+                ];
+            }
+
+            DB::commit();
+        } catch (\Exception $e) {
+            DB::rollBack();
+            return response()->json([
+                'success' => false,
+                'message' => 'Gagal memproses SSID: ' . $e->getMessage(),
+            ]);
+        }
+
+        // Build message
+        $message = "Proses selesai. ";
+        $message .= "{$results['auto_added_count']} SSID otomatis ditambahkan. ";
+        if ($results['skipped_count'] > 0) {
+            $message .= "{$results['skipped_count']} SSID sudah ada di periode. ";
+        }
+        if ($results['new_ssid_count'] > 0) {
+            $message .= "{$results['new_ssid_count']} SSID BARU perlu diisi datanya.";
+        }
+
+        return response()->json([
+            'success' => true,
+            'message' => $message,
+            'results' => $results,
+        ]);
+    }
+
+    /**
+     * Save imported SSIDs to invoice_lines
+     * Params:
+     * - ready_to_add: Array of {bank_jatim_link_id} for SSIDs that exist in DB
+     * - new_ssids: Array of new SSID data for SSIDs that don't exist in DB yet
+     */
+    public function saveImportedSsids(Request $request, InvoicePeriod $invoicePeriod)
+    {
+        $request->validate([
+            'ready_to_add' => 'nullable|array',
+            'new_ssids' => 'nullable|array',
+        ]);
+
+        DB::beginTransaction();
+        try {
+            $maxLineNumber = \App\Models\InvoiceLine::where('invoice_period_id', $invoicePeriod->id)->max('line_number') ?? 0;
+            $addedCount = 0;
+
+            // Save existing SSIDs (SSIDs yang sudah ada di database)
+            $readyToAdd = $request->input('ready_to_add', []);
+            foreach ($readyToAdd as $item) {
+                $linkId = is_array($item) ? ($item['bank_jatim_link_id'] ?? null) : $item;
+                if (!$linkId) continue;
+
+                $link = \App\Models\BankJatimLink::find($linkId);
+                if (!$link) continue;
+
+                // Check if already exists in this period
+                $exists = \App\Models\InvoiceLine::where('invoice_period_id', $invoicePeriod->id)
+                    ->where('bank_jatim_link_id', $linkId)
+                    ->exists();
+                if ($exists) continue;
+
+                $lineNumber = $link->sequence_in_office_type ?? ($maxLineNumber + 1);
+                $existingLine = \App\Models\InvoiceLine::where('invoice_period_id', $invoicePeriod->id)
+                    ->where('line_number', $lineNumber)
+                    ->first();
+                if ($existingLine) {
+                    $lineNumber = $maxLineNumber + 1;
+                    $maxLineNumber = $lineNumber;
+                } else {
+                    $maxLineNumber = max($maxLineNumber, $lineNumber);
+                }
+
+                \App\Models\InvoiceLine::create([
+                    'invoice_period_id' => $invoicePeriod->id,
+                    'bank_jatim_link_id' => $linkId,
+                    'line_number' => $lineNumber,
+                    'effective_date' => $invoicePeriod->start_date,
+                    'address_snapshot' => $link->address,
+                    'downtime_days' => 0,
+                    'downtime_hours' => 0,
+                    'downtime_minutes' => 0,
+                    'sla_target' => 99.5,
+                    'restitution_manual' => 0,
+                    'restitution_over_sla' => 0,
+                    'restitution_total' => 0,
+                ]);
+                $addedCount++;
+            }
+
+            // Handle NEW SSIDs if any (SSIDs yang tidak ada di database - user harus isi form dulu)
+            $newSsids = $request->input('new_ssids', []);
+            foreach ($newSsids as $newSsid) {
+                if (isset($newSsid['bank_jatim_link_id'])) {
+                    $link = \App\Models\BankJatimLink::find($newSsid['bank_jatim_link_id']);
+                    if ($link) {
+                        $lineNumber = $link->sequence_in_office_type ?? ($maxLineNumber + 1);
+                        $existingLine = \App\Models\InvoiceLine::where('invoice_period_id', $invoicePeriod->id)
+                            ->where('line_number', $lineNumber)
+                            ->first();
+                        if ($existingLine) {
+                            $lineNumber = $maxLineNumber + 1;
+                        }
+
+                        \App\Models\InvoiceLine::create([
+                            'invoice_period_id' => $invoicePeriod->id,
+                            'bank_jatim_link_id' => $newSsid['bank_jatim_link_id'],
+                            'line_number' => $lineNumber,
+                            'effective_date' => $invoicePeriod->start_date,
+                            'address_snapshot' => $link->address,
+                            'is_new_ssid' => true,
+                            'new_ssid_note' => 'SSID baru ditambahkan di periode ' . $invoicePeriod->period_code,
+                        ]);
+                        $addedCount++;
+                    }
+                }
+            }
+
+            DB::commit();
+
+            return response()->json([
+                'success' => true,
+                'message' => "{$addedCount} SSID berhasil disimpan ke invoice",
+                'count' => $addedCount,
+            ]);
+        } catch (\Exception $e) {
+            DB::rollBack();
+            return response()->json([
+                'success' => false,
+                'message' => 'Gagal menyimpan SSID: ' . $e->getMessage(),
+            ]);
+        }
+    }
+
+    /**
+     * Store new SSID to bank_jatim_links AND add to invoice_lines for this period
+     * Can also update an existing pending SSID (from ssid_temp)
+     *
+     * Logic:
+     * 1. Get next sequence number within the same location_category for the office_type
+     * 2. Renumber all SSIDs after the new position (within same location_category)
+     * 3. Create in bank_jatim_links
+     * 4. Create/update invoice_line for this period
+     */
+    public function storeNewSsid(Request $request, InvoicePeriod $invoicePeriod)
+    {
+        $request->validate([
+            'ssid' => 'required|string|max:255|unique:bank_jatim_links,ssid',
+            'office_type_id' => 'required|exists:office_types,id',
+            'location_category_id' => 'required|exists:location_categories,id',
+            'service_id' => 'required|exists:services,id',
+            'ip_host_telkom' => 'nullable|string|max:255',
+            'address' => 'nullable|string|max:500',
+            'service_start_date' => 'nullable|date',
+            'link_status' => 'nullable|in:active,inactive',
+            'pending_line_id' => 'nullable|exists:invoice_lines,id', // SSID pending yang mau di-resolve
+        ]);
+
+        DB::beginTransaction();
+        try {
+            $officeTypeId = $request->office_type_id;
+            $locationCategoryId = $request->location_category_id;
+
+            // Get next sequence number within the same location_category for this office_type
+            // SSIDs are ordered by: office_type (sort_order), then sequence_in_office_type (grouped by location_category)
+            $maxSeqInCategory = \App\Models\BankJatimLink::where('office_type_id', $officeTypeId)
+                ->where('location_category_id', $locationCategoryId)
+                ->max('sequence_in_office_type') ?? 0;
+
+            // New sequence is the next number after the last SSID in this location_category
+            $newSequence = $maxSeqInCategory + 1;
+
+            // Get all SSIDs in this office_type with sequence >= newSequence (same or higher)
+            // These need to be renumbered to make room
+            $ssidsToRenumber = \App\Models\BankJatimLink::where('office_type_id', $officeTypeId)
+                ->where('sequence_in_office_type', '>=', $newSequence)
+                ->where('id', '!=', $request->pending_line_id ?
+                    \App\Models\InvoiceLine::find($request->pending_line_id)?->bank_jatim_link_id : 0)
+                ->orderBy('sequence_in_office_type', 'desc')
+                ->get();
+
+            // Renumber existing SSIDs (shift up by 1)
+            foreach ($ssidsToRenumber as $ssid) {
+                $ssid->update([
+                    'sequence_in_office_type' => $ssid->sequence_in_office_type + 1
+                ]);
+            }
+
+            // Create in bank_jatim_links with the calculated sequence
+            $link = \App\Models\BankJatimLink::create([
+                'ssid' => $request->ssid,
+                'office_type_id' => $officeTypeId,
+                'location_category_id' => $locationCategoryId,
+                'service_id' => $request->service_id,
+                'sequence_in_office_type' => $newSequence,
+                'ip_host_telkom' => $request->ip_host_telkom,
+                'address' => $request->address,
+                'service_start_date' => $request->service_start_date,
+                'link_status' => $request->link_status ?? 'active',
+                'created_by' => Auth::id(),
+            ]);
+
+            // Check if this is resolving a pending SSID
+            if ($request->pending_line_id) {
+                $pendingLine = \App\Models\InvoiceLine::find($request->pending_line_id);
+                if ($pendingLine && $pendingLine->invoice_period_id == $invoicePeriod->id) {
+                    // Update existing pending line with bank_jatim_link_id
+                    $pendingLine->update([
+                        'bank_jatim_link_id' => $link->id,
+                        'address_snapshot' => $link->address,
+                        'is_new_ssid' => true, // Tetap ditandai sebagai SSID baru
+                        'new_ssid_note' => 'SSID baru ditambahkan di periode ' . $invoicePeriod->period_code,
+                    ]);
+
+                    $lineNumber = $pendingLine->line_number;
+                } else {
+                    // Fallback: create new line
+                    $lineNumber = \App\Models\InvoiceLine::where('invoice_period_id', $invoicePeriod->id)->max('line_number') ?? 0;
+                    $lineNumber++;
+                    $this->createInvoiceLineForNewSsid($invoicePeriod, $link, $lineNumber);
+                }
+            } else {
+                // Create new line for this period
+                $lineNumber = \App\Models\InvoiceLine::where('invoice_period_id', $invoicePeriod->id)->max('line_number') ?? 0;
+                $lineNumber++;
+                $this->createInvoiceLineForNewSsid($invoicePeriod, $link, $lineNumber);
+            }
+
+            DB::commit();
+
+            $link->load(['officeType', 'locationCategory', 'service']);
+
+            return response()->json([
+                'success' => true,
+                'message' => 'SSID berhasil ditambahkan ke invoice periode ini (urutan: ' . $newSequence . ' dalam kategori ini)',
+                'data' => [
+                    'id' => $link->id,
+                    'ssid' => $link->ssid,
+                    'office_type' => $link->officeType ? ['name' => $link->officeType->name] : null,
+                    'location_category' => $link->locationCategory ? ['name' => $link->locationCategory->name] : null,
+                    'service' => $link->service ? ['name' => $link->service->name] : null,
+                    'ip_host_telkom' => $link->ip_host_telkom,
+                    'address' => $link->address,
+                    'service_start_date' => $link->service_start_date,
+                    'link_status' => $link->link_status,
+                    'line_number' => $lineNumber,
+                    'sequence' => $newSequence,
+                ],
+            ]);
+        } catch (\Exception $e) {
+            DB::rollBack();
+            return response()->json([
+                'success' => false,
+                'message' => 'Gagal menyimpan: ' . $e->getMessage(),
+            ]);
+        }
+    }
+
+    /**
+     * Helper: Create invoice line for new SSID
+     */
+    private function createInvoiceLineForNewSsid(InvoicePeriod $invoicePeriod, $link, int $lineNumber)
+    {
+        \App\Models\InvoiceLine::create([
+            'invoice_period_id' => $invoicePeriod->id,
+            'bank_jatim_link_id' => $link->id,
+            'line_number' => $lineNumber,
+            'effective_date' => $invoicePeriod->start_date,
+            'address_snapshot' => $link->address,
+            'downtime_days' => 0,
+            'downtime_hours' => 0,
+            'downtime_minutes' => 0,
+            'sla_target' => 99.5,
+            'restitution_manual' => 0,
+            'restitution_over_sla' => 0,
+            'restitution_total' => 0,
+            'is_new_ssid' => true,
+            'new_ssid_note' => 'SSID baru ditambahkan di periode ' . $invoicePeriod->period_code,
+        ]);
+    }
+
+    /**
+     * Update SSID data in invoice_lines and bank_jatim_links
+     * If location_category changes, renumber sequences properly within each location_category
+     */
+    public function updateSsid(Request $request, InvoicePeriod $invoicePeriod, InvoiceLine $invoiceLine)
+    {
+        $request->validate([
+            'office_type_id' => 'required|exists:office_types,id',
+            'location_category_id' => 'required|exists:location_categories,id',
+            'service_id' => 'required|exists:services,id',
+            'ip_host_telkom' => 'nullable|string|max:255',
+            'address' => 'nullable|string|max:500',
+            'service_start_date' => 'nullable|date',
+            'link_status' => 'nullable|in:active,inactive',
+        ]);
+
+        DB::beginTransaction();
+        try {
+            $link = $invoiceLine->bankJatimLink;
+
+            $oldOfficeTypeId = $link->office_type_id;
+            $oldLocationCategoryId = $link->location_category_id;
+            $oldSequence = $link->sequence_in_office_type;
+
+            $newOfficeTypeId = $request->office_type_id;
+            $newLocationCategoryId = $request->location_category_id;
+
+            $locationCategoryChanged = ($oldLocationCategoryId != $newLocationCategoryId);
+            $officeTypeChanged = ($oldOfficeTypeId != $newOfficeTypeId);
+
+            if ($locationCategoryChanged || $officeTypeChanged) {
+                // === CASE: Location category changed ===
+                // 1. Remove this SSID from old location category sequence
+                // 2. Renumber SSIDs after it in old category (decrement)
+                \App\Models\BankJatimLink::where('office_type_id', $oldOfficeTypeId)
+                    ->where('location_category_id', $oldLocationCategoryId)
+                    ->where('sequence_in_office_type', '>', $oldSequence)
+                    ->decrement('sequence_in_office_type');
+
+                // 3. Get max sequence in new location category
+                $maxSeqInNewCategory = \App\Models\BankJatimLink::where('office_type_id', $newOfficeTypeId)
+                    ->where('location_category_id', $newLocationCategoryId)
+                    ->max('sequence_in_office_type') ?? 0;
+                $newSequence = $maxSeqInNewCategory + 1;
+
+                // 4. Renumber SSIDs in new category that will be after this SSID (increment)
+                \App\Models\BankJatimLink::where('office_type_id', $newOfficeTypeId)
+                    ->where('location_category_id', $newLocationCategoryId)
+                    ->where('sequence_in_office_type', '>=', $newSequence)
+                    ->increment('sequence_in_office_type');
+
+                // Update the link with new values
+                $link->update([
+                    'office_type_id' => $newOfficeTypeId,
+                    'location_category_id' => $newLocationCategoryId,
+                    'service_id' => $request->service_id,
+                    'sequence_in_office_type' => $newSequence,
+                    'ip_host_telkom' => $request->ip_host_telkom,
+                    'address' => $request->address,
+                    'service_start_date' => $request->service_start_date,
+                    'link_status' => $request->link_status ?? $link->link_status,
+                    'updated_by' => Auth::id(),
+                ]);
+            } else {
+                // === CASE: Same location category, just update other fields ===
+                $link->update([
+                    'service_id' => $request->service_id,
+                    'ip_host_telkom' => $request->ip_host_telkom,
+                    'address' => $request->address,
+                    'service_start_date' => $request->service_start_date,
+                    'link_status' => $request->link_status ?? $link->link_status,
+                    'updated_by' => Auth::id(),
+                ]);
+            }
+
+            // Update address_snapshot in invoice_lines if address changed
+            if ($request->has('address')) {
+                $invoiceLine->update([
+                    'address_snapshot' => $request->address,
+                ]);
+            }
+
+            DB::commit();
+
+            $link->load(['officeType', 'locationCategory', 'service']);
+
+            return response()->json([
+                'success' => true,
+                'message' => 'SSID berhasil diupdate' . ($locationCategoryChanged || $officeTypeChanged ? '. Urutan diperbarui.' : ''),
+                'data' => [
+                    'id' => $link->id,
+                    'ssid' => $link->ssid,
+                    'office_type' => $link->officeType ? ['id' => $link->officeType->id, 'name' => $link->officeType->name] : null,
+                    'location_category' => $link->locationCategory ? ['id' => $link->locationCategory->id, 'name' => $link->locationCategory->name] : null,
+                    'service' => $link->service ? ['id' => $link->service->id, 'name' => $link->service->name] : null,
+                    'sequence' => $link->sequence_in_office_type,
+                ],
+            ]);
+        } catch (\Exception $e) {
+            DB::rollBack();
+            return response()->json([
+                'success' => false,
+                'message' => 'Gagal update: ' . $e->getMessage(),
+            ]);
+        }
+    }
+
+    public function getStepStatus(InvoicePeriod $invoicePeriod, string $stepCode)
+    {
+        $step = InvoiceStep::where('step_code', $stepCode)->firstOrFail();
+        $status = InvoiceStepStatus::where('invoice_period_id', $invoicePeriod->id)
+            ->where('invoice_step_id', $step->id)
+            ->first();
+
+        return response()->json([
+            'success' => true,
+            'step' => $step,
+            'status' => $status,
+        ]);
+    }
+
+    /**
+     * Check if invoice lines exist for this period
+     */
+    public function checkLines(InvoicePeriod $invoicePeriod)
+    {
+        $count = \App\Models\InvoiceLine::where('invoice_period_id', $invoicePeriod->id)->count();
+
+        return response()->json([
+            'success' => true,
+            'count' => $count,
+        ]);
+    }
+
+    /**
+     * Update step status
+     */
+    public function updateStepStatus(Request $request, InvoicePeriod $invoicePeriod)
+    {
+        $request->validate([
+            'step_code' => 'required|exists:invoice_steps,step_code',
+            'status' => 'required|in:not_started,in_progress,completed,error,skipped',
+            'notes' => 'nullable|string|max:1000',
+        ]);
+
+        $step = InvoiceStep::where('step_code', $request->step_code)->firstOrFail();
+
+        // Find or create step status
+        $stepStatus = InvoiceStepStatus::where('invoice_period_id', $invoicePeriod->id)
+            ->where('invoice_step_id', $step->id)
+            ->first();
+
+        $updateData = [
+            'status' => $request->status,
+            'notes' => $request->notes ?? null,
+        ];
+
+        // Set timestamps based on status
+        if ($request->status === InvoiceStepStatus::STATUS_IN_PROGRESS) {
+            if (!$stepStatus) {
+                $stepStatus = InvoiceStepStatus::create([
+                    'invoice_period_id' => $invoicePeriod->id,
+                    'invoice_step_id' => $step->id,
+                    'status' => $request->status,
+                    'started_at' => now(),
+                    'notes' => $request->notes ?? null,
+                ]);
+            } else {
+                if (!$stepStatus->started_at) {
+                    $updateData['started_at'] = now();
+                }
+                $stepStatus->update($updateData);
+            }
+        } elseif ($request->status === InvoiceStepStatus::STATUS_COMPLETED) {
+            $updateData['completed_at'] = now();
+            $updateData['completed_by'] = Auth::id();
+            if ($stepStatus) {
+                $stepStatus->update($updateData);
+            } else {
+                $stepStatus = InvoiceStepStatus::create([
+                    'invoice_period_id' => $invoicePeriod->id,
+                    'invoice_step_id' => $step->id,
+                    'status' => $request->status,
+                    'completed_at' => now(),
+                    'completed_by' => Auth::id(),
+                    'notes' => $request->notes ?? null,
+                ]);
+            }
+        } else {
+            if ($stepStatus) {
+                $stepStatus->update($updateData);
+            } else {
+                $stepStatus = InvoiceStepStatus::create([
+                    'invoice_period_id' => $invoicePeriod->id,
+                    'invoice_step_id' => $step->id,
+                    'status' => $request->status,
+                    'notes' => $request->notes ?? null,
+                ]);
+            }
+        }
+
+        // Update current step code
+        $invoicePeriod->update(['current_step_code' => $request->step_code]);
+
+        // Recalculate progress percentage
+        $this->recalculateProgress($invoicePeriod);
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Status step berhasil diperbarui',
+            'step_status' => $stepStatus->fresh(),
+            'period_progress' => $invoicePeriod->fresh()->progress_percentage,
+        ]);
+    }
+
+    /**
+     * Recalculate and update progress percentage
+     */
+    private function recalculateProgress(InvoicePeriod $period)
+    {
+        $totalSteps = $period->stepStatuses()->count();
+        $completedSteps = $period->stepStatuses()
+            ->whereIn('status', [
+                InvoiceStepStatus::STATUS_COMPLETED,
+                InvoiceStepStatus::STATUS_SKIPPED
+            ])
+            ->count();
+
+        $progress = $totalSteps > 0 ? round(($completedSteps / $totalSteps) * 100) : 0;
+
+        $period->update(['progress_percentage' => $progress]);
+
+        // Update overall status if needed
+        if ($progress == 100 && $period->status === InvoicePeriod::STATUS_IN_PROGRESS) {
+            $period->update(['status' => InvoicePeriod::STATUS_VALIDATION]);
+        }
+    }
+
+
+    /**
+     * Step 2: Type Order & Bandwidth Data
+     */
+    public function step2(InvoicePeriod $invoicePeriod)
+    {
+        // VALIDASI: Cek apakah step sebelumnya (ssid_list) sudah selesai
+        $ssidListStep = \App\Models\InvoiceStep::where("step_code", InvoicePeriod::STEP_SSID_LIST)->first();
+        if ($ssidListStep) {
+            $ssidListStatus = InvoiceStepStatus::where("invoice_period_id", $invoicePeriod->id)
+                ->where("invoice_step_id", $ssidListStep->id)
+                ->first();
+
+            if (!$ssidListStatus || !in_array($ssidListStatus->status, [InvoiceStepStatus::STATUS_COMPLETED, InvoiceStepStatus::STATUS_SKIPPED])) {
+                return redirect()->route("invoice-periods.show", $invoicePeriod)
+                    ->with("warning", "Anda harus menyelesaikan Step 1 terlebih dahulu.");
+            }
+        }
+
+        $invoicePeriod->load(["stepStatuses.step"]);
+
+        // Get SSIDs dari Step 1
+        $invoiceLines = \App\Models\InvoiceLine::where("invoice_period_id", $invoicePeriod->id)
+            ->with(["bankJatimLink.officeType", "bankJatimLink.locationCategory", "bankJatimLink.service", "typeOrder", "invoiceBandwidth"])
+            ->orderBy("line_number")
+            ->get();
+
+        $invoiceLinesCount = $invoiceLines->count();
+        $typeOrders = \App\Models\TypeOrder::active()->ordered()->get();
+        $bandwidthOptions = \App\Models\BandwidthOption::active()->ordered()->get();
+        $currentStep = \App\Models\InvoiceStep::where("step_code", "type_order")->first();
+        $steps = \App\Models\InvoiceStep::where("is_active", true)->orderBy("step_number")->get();
+        $filledCount = $invoiceLines->filter(fn($line) => $line->type_order_id !== null)->count();
+        $isComplete = $invoiceLinesCount > 0 && $filledCount == $invoiceLinesCount;
+
+        $stepData = [
+            "targetCount" => $invoiceLinesCount,
+            "filledCount" => $filledCount,
+            "isComplete" => $isComplete,
+        ];
+
+        return view("invoice-periods.step2", [
+            "title" => "Sub Tahap 1.2 - Type Order & Bandwidth",
+            "subtitle" => $invoicePeriod->period_code,
+            "period" => $invoicePeriod,
+            "currentStep" => $currentStep,
+            "steps" => $steps,
+            "stepData" => $stepData,
+            "invoiceLines" => $invoiceLines,
+            "typeOrders" => $typeOrders,
+            "bandwidthOptions" => $bandwidthOptions,
+        ]);
+    }
