@@ -7,6 +7,10 @@
 *.md diff=markdown
 *.php diff=php
 
+# Packaged seed data is binary (gzip / xlsx / pdf / png): never convert line endings
+/database/seed-data/tables/** binary
+/database/seed-data/files/** binary
+
 /.github export-ignore
 CHANGELOG.md export-ignore
 .styleci.yml export-ignore

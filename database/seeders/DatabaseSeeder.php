@@ -3,6 +3,7 @@
 namespace Database\Seeders;
 
 use App\Models\User;
+use App\Services\SeedDataPackage;
 use Illuminate\Database\Console\Seeds\WithoutModelEvents;
 use Illuminate\Database\Seeder;
 
@@ -15,6 +16,13 @@ class DatabaseSeeder extends Seeder
      */
     public function run(): void
     {
+        // A committed data package (database/seed-data) replaces the generic seed: masters, links and invoice progress.
+        if (SeedDataPackage::exists()) {
+            $this->call(InvoiceProgressSeeder::class);
+
+            return;
+        }
+
         // Seed master data first (order matters!)
         $this->call([
             OfficeTypesSeeder::class,
