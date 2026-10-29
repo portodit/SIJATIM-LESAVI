@@ -10,7 +10,7 @@ class InvoiceController extends Controller
 {
     public function index()
     {
-        $invoices = Invoice::with('snapshot')
+        $invoices = Invoice::with(['snapshot', 'invoicePeriod', 'revisions.outputs'])
             ->latest()
             ->paginate(15);
 
@@ -23,7 +23,7 @@ class InvoiceController extends Controller
 
     public function show(Invoice $invoice)
     {
-        $invoice->load(['snapshot', 'generator']);
+        $invoice->load(['snapshot', 'generator', 'invoicePeriod', 'revisions.outputs']);
 
         return view('invoices.show', [
             'title' => 'Detail Invoice',
@@ -34,6 +34,8 @@ class InvoiceController extends Controller
 
     public function download(Invoice $invoice)
     {
+        $revision = $invoice->revisions()->where('status', 'ready')->latest('version')->first();
+        if($revision) { $output = $revision->outputs()->where('output_type', 'excel_invoice')->firstOrFail(); return app(BillingWorkflowController::class)->download($output); }
         if (!$invoice->file_path || !Storage::exists($invoice->file_path)) {
             return back()->with('error', 'File invoice tidak ditemukan!');
         }

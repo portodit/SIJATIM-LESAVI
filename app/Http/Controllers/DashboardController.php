@@ -2,69 +2,50 @@
 
 namespace App\Http\Controllers;
 
-use App\Models\InvoicePeriod;
 use App\Models\Invoice;
+use App\Models\InvoicePeriod;
 use Illuminate\Http\Request;
-use Carbon\Carbon;
 
 class DashboardController extends Controller
 {
-    public function index()
+    public function index(Request $request)
     {
-        // Get statistics
-        $totalPeriods = InvoicePeriod::count();
-        $totalInvoices = Invoice::count();
+        $periods = InvoicePeriod::orderByDesc('year')->orderByDesc('month')->get();
+        $period = $request->period ? $periods->firstWhere('id', (int) $request->period) : $periods->first();
+        abort_if($request->period && ! $period, 404);
 
-        // Periods this month
-        $periodsThisMonth = InvoicePeriod::whereMonth('created_at', now()->month)
-            ->whereYear('created_at', now()->year)
-            ->count();
-
-        // Total value this month
-        $totalValueThisMonth = Invoice::whereMonth('created_at', now()->month)
-            ->whereYear('created_at', now()->year)
-            ->sum('total_amount');
-
-        // Recent periods
-        $recentPeriods = InvoicePeriod::with('creator')
-            ->latest()
-            ->take(5)
-            ->get();
-
-        // Recent invoices
-        $recentInvoices = Invoice::with('invoicePeriod')
-            ->latest()
-            ->take(5)
-            ->get();
-
-        // Monthly stats for chart (last 6 months)
         $monthlyStats = [];
         for ($i = 5; $i >= 0; $i--) {
-            $month = now()->subMonths($i);
-            $count = InvoicePeriod::whereMonth('created_at', $month->month)
-                ->whereYear('created_at', $month->year)
-                ->count();
-            $value = Invoice::whereMonth('created_at', $month->month)
-                ->whereYear('created_at', $month->year)
-                ->sum('total_amount');
-
+            $month = now()->startOfMonth()->subMonthsNoOverflow($i);
             $monthlyStats[] = [
-                'month' => $month->format('M Y'),
-                'count' => $count,
-                'value' => $value,
+                'month' => InvoicePeriod::MONTH_CODES[$month->month].$month->format('y'),
+                'value' => Invoice::whereHas('invoicePeriod', fn ($q) => $q->where('year', $month->year)->where('month', $month->month))->sum('total_amount'),
             ];
         }
 
-        return view('dashboard', [
-            'title' => 'Beranda',
-            'subtitle' => 'Dashboard Sistem Informasi Invoice Bank Jatim',
-            'totalPeriods' => $totalPeriods,
-            'totalInvoices' => $totalInvoices,
-            'periodsThisMonth' => $periodsThisMonth,
-            'totalValueThisMonth' => $totalValueThisMonth,
-            'recentPeriods' => $recentPeriods,
-            'recentInvoices' => $recentInvoices,
-            'monthlyStats' => $monthlyStats,
-        ]);
+        $data = ['title' => 'Dashboard', 'periods' => $periods, 'period' => $period, 'monthlyStats' => $monthlyStats];
+        if ($period) {
+            $revisions = $period->revisions()->with('outputs')->latest('version')->get();
+            $current = $period->calculationIsCurrent();
+            $blocking = collect($period->readinessIssues())->filter(fn ($i) => in_array($i['severity'], ['blocking', 'exception']))->count();
+            $hasLines = $period->lines()->exists();
+            $state = $period->workflowState($revisions->first());
+            [$nextStep, $nextLabel] = match (true) {
+                $period->isLocked() => [3, 'Lihat & unduh file'],
+                $current && ! $blocking => [3, 'Lanjut: Terbitkan'],
+                $current => [2, 'Lengkapi '.$blocking.' kekurangan'],
+                $hasLines => [1, 'Lanjutkan isi layanan & downtime'],
+                default => [1, 'Mulai isi layanan'],
+            };
+            $data += [
+                'state' => $state, 'current' => $current, 'hasLines' => $hasLines, 'blocking' => $blocking,
+                'totals' => $current ? $period->calculation['totals'] : null, 'latestReady' => $revisions->firstWhere('status', 'ready'),
+                'nextUrl' => route('invoice-periods.step'.$nextStep, $period), 'nextLabel' => $nextLabel,
+                'lineCount' => $period->lines()->count(), 'changeCount' => $period->serviceEvents()->distinct()->count('sid'),
+                'downtimeCount' => $period->outages()->where('duration_seconds', '>', 0)->distinct()->count('sid'),
+            ];
+        }
+
+        return view('dashboard', $data);
     }
 }

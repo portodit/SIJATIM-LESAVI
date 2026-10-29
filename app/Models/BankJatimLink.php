@@ -30,12 +30,14 @@ class BankJatimLink extends Model
         'created_by',
         'updated_by',
         'notes',
+        'billing_start_date', 'billing_end_date', 'physical_router_status', 'billable_router_status', 'router_billing_from', 'addendum_contract_id',
     ];
 
     protected $casts = [
         'service_start_date' => 'date',
         'service_end_date' => 'date',
         'sequence_in_office_type' => 'integer',
+        'billing_start_date' => 'date', 'billing_end_date' => 'date', 'router_billing_from' => 'date',
     ];
 
     // Link status
@@ -268,7 +270,7 @@ class BankJatimLink extends Model
             $deletedSequence = $link->sequence_in_office_type;
 
             // Hapus semua invoice_lines yang terkait
-            $link->invoiceLines()->delete();
+            // Historical invoice lines retain their service identity, even after archival.
 
             // Renumber sequence setelah delete
             self::renumberSequencesForOfficeType($officeTypeId);

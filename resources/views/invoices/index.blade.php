@@ -16,7 +16,7 @@
             <thead>
                 <tr>
                     <th>Invoice Number</th>
-                    <th>Snapshot</th>
+                    <th>Periode invoice</th>
                     <th>Lokasi</th>
                     <th>Total</th>
                     <th>Tanggal</th>
@@ -28,9 +28,7 @@
                     <tr>
                         <td class="font-mono font-medium">{{ $invoice->invoice_number }}</td>
                         <td>
-                            <a href="{{ route('snapshots.show', $invoice->snapshot) }}" class="text-gray-900 hover:text-[#E6002D]">
-                                {{ $invoice->snapshot->name ?? '-' }}
-                            </a>
+                            @if($invoice->invoicePeriod)<a href="{{ route('invoices.show', $invoice) }}" class="text-gray-900 hover:text-[#E6002D]">{{ $invoice->invoicePeriod->period_name }}</a>@else {{ $invoice->snapshot?->name ?? 'Riwayat lama' }} @endif
                         </td>
                         <td class="text-gray-600">{{ $invoice->total_locations }}</td>
                         <td class="font-medium">{{ $invoice->formatted_amount }}</td>

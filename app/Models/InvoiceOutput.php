@@ -23,6 +23,7 @@ class InvoiceOutput extends Model
         'version',
         'generated_by',
         'notes',
+        'invoice_revision_id',
     ];
 
     protected $casts = [
@@ -34,6 +35,20 @@ class InvoiceOutput extends Model
     public const TYPE_EXCEL_INVOICE = 'excel_invoice';
     public const TYPE_PDF_CETAK = 'pdf_cetak';
     public const TYPE_LAMPIRAN = 'lampiran';
+    public const TYPE_SUMMARY_PNG = 'summary_png';
+
+    /**
+     * Name shown on download buttons.
+     */
+    public function getDownloadLabelAttribute(): string
+    {
+        return match ($this->output_type) {
+            self::TYPE_EXCEL_INVOICE => 'Excel',
+            self::TYPE_PDF_CETAK => 'PDF',
+            self::TYPE_SUMMARY_PNG => 'Ringkasan (PNG)',
+            default => ucfirst(str_replace('_', ' ', $this->output_type)),
+        };
+    }
 
     // Status
     public const STATUS_DRAFT = 'draft';
@@ -47,6 +62,8 @@ class InvoiceOutput extends Model
     {
         return $this->belongsTo(InvoicePeriod::class, 'invoice_period_id');
     }
+
+    public function revision(): BelongsTo { return $this->belongsTo(InvoiceRevision::class, 'invoice_revision_id'); }
 
     /**
      * Relasi: User yang generate

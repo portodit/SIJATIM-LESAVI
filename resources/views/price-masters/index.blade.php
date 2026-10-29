@@ -23,9 +23,9 @@
                     <th>Layanan</th>
                     <th>Bandwidth</th>
                     <th class="text-right">Harga Bulanan</th>
-                    <th class="text-right">+ PPN 11%</th>
+                    <th class="text-right">+ PPN {{ \App\Services\Billing\TaxRate::label($ppnRate) }}</th>
                     <th class="text-right">Harga Pasang</th>
-                    <th class="text-right">+ PPN 11%</th>
+                    <th class="text-right">+ PPN {{ \App\Services\Billing\TaxRate::label($ppnRate) }}</th>
                     <th>Berlaku</th>
                     <th>Status</th>
                 </tr>
@@ -37,9 +37,9 @@
                         <td class="text-gray-600">{{ $price->service->name ?? '-' }}</td>
                         <td class="text-gray-600">{{ $price->bandwidthOption->name ?? '-' }}</td>
                         <td class="text-right font-mono">Rp {{ number_format($price->monthly_price, 0, ',', '.') }}</td>
-                        <td class="text-right font-mono text-gray-600">Rp {{ number_format($price->monthly_price_with_ppn, 0, ',', '.') }}</td>
+                        <td class="text-right font-mono text-gray-600">Rp {{ number_format($price->calculateWithPpn($ppnRate), 0, ',', '.') }}</td>
                         <td class="text-right font-mono">Rp {{ number_format($price->installation_price, 0, ',', '.') }}</td>
-                        <td class="text-right font-mono text-gray-600">Rp {{ number_format($price->installation_price_with_ppn, 0, ',', '.') }}</td>
+                        <td class="text-right font-mono text-gray-600">Rp {{ number_format($price->calculateInstallationWithPpn($ppnRate), 0, ',', '.') }}</td>
                         <td class="text-sm text-gray-600">
                             @if($price->effective_start_date)
                                 {{ \Carbon\Carbon::parse($price->effective_start_date)->format('d/m/Y') }}

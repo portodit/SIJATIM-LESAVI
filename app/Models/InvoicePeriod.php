@@ -7,6 +7,7 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\Relations\HasOne;
+use Brick\Math\BigInteger;
 use Carbon\Carbon;
 
 class InvoicePeriod extends Model
@@ -30,6 +31,8 @@ class InvoicePeriod extends Model
         'finalized_by',
         'created_by',
         'notes',
+        'billing_profile_id', 'invoice_metadata', 'input_version', 'calculated_input_version',
+        'calculation', 'calculated_at', 'sla_coverage',
     ];
 
     protected $casts = [
@@ -41,6 +44,8 @@ class InvoicePeriod extends Model
         'finalized_at' => 'datetime',
         'start_date' => 'date',
         'end_date' => 'date',
+        'invoice_metadata' => 'array', 'calculation' => 'array', 'sla_coverage' => 'array',
+        'calculated_at' => 'datetime', 'input_version' => 'integer', 'calculated_input_version' => 'integer',
     ];
 
     // Nama bulan dalam Bahasa Indonesia
@@ -71,14 +76,7 @@ class InvoicePeriod extends Model
     public const STEP_OVERVIEW = 'overview';
     public const STEP_SSID_LIST = 'ssid_list';
     public const STEP_TYPE_ORDER = 'type_order';
-    public const STEP_BANDWIDTH = 'bandwidth';
-    public const STEP_BANDWIDTH_BENCHMARK = 'bandwidth_benchmark';
-    public const STEP_TRAFFIC_USAGE = 'traffic_usage';
-    public const STEP_PRICE = 'price';
-    public const STEP_SLA = 'sla';
-    public const STEP_RESTITUTION = 'restitution';
-    public const STEP_PRICE_BENCHMARK = 'price_benchmark';
-    public const STEP_FINALIZATION = 'finalization';
+    public const STEP_PREVIEW = 'preview';
 
     /**
      * Relasi: User yang membuat periode
@@ -110,6 +108,123 @@ class InvoicePeriod extends Model
     public function lines(): HasMany
     {
         return $this->hasMany(InvoiceLine::class);
+    }
+
+    public function billingProfile(): BelongsTo { return $this->belongsTo(BillingProfile::class); }
+    public function revisions(): HasMany { return $this->hasMany(InvoiceRevision::class); }
+    public function serviceEvents(): HasMany { return $this->hasMany(ServiceEvent::class); }
+    public function outages(): HasMany { return $this->hasMany(OutageEvent::class); }
+    public function adjustments(): HasMany { return $this->hasMany(InvoiceAdjustment::class); }
+
+    public function markInputsChanged(string $action, array $details = []): void
+    {
+        abort_if($this->fresh()->isLocked(), 423, 'Periode sudah terkunci. Buat revisi untuk mengubah input.');
+        \Illuminate\Support\Facades\DB::table('invoice_periods')->where('id', $this->id)->update([
+            'input_version' => \Illuminate\Support\Facades\DB::raw('input_version + 1'),
+            'calculation' => null, 'calculated_input_version' => null, 'calculated_at' => null,
+            'status' => $this->status === self::STATUS_REVISION ? self::STATUS_REVISION : self::STATUS_IN_PROGRESS,
+            'updated_at' => now(),
+        ]);
+        \Illuminate\Support\Facades\DB::table('billing_audit_events')->insert([
+            'invoice_period_id' => $this->id, 'action' => $action, 'details' => json_encode($details),
+            'user_id' => auth()->id(), 'created_at' => now(), 'updated_at' => now(),
+        ]);
+        $this->refresh();
+    }
+
+    public function calculationIsCurrent(): bool
+    {
+        if ($this->calculation === null || $this->calculated_input_version !== $this->input_version) {
+            return false;
+        }
+        if ($this->isLocked()) {
+            return true;
+        }
+        $target = (float) \App\Services\Billing\BillingMath::SLA_TARGET;
+
+        return (float) ($this->calculation['profile']['settings']['sla_target'] ?? 0) === $target
+            && ! collect($this->calculation['lines'] ?? [])->contains(fn ($line) => (float) ($line['sla_target'] ?? 0) !== $target);
+    }
+
+    public function pendingSourceIssues(): array
+    {
+        $issues = [];
+        foreach ($this->importBatches()->whereNull('committed_at')->where('status', '!=', 'discarded')->whereHas('rows', fn($q) => $q->where('status', '!=', 'ignored'))->get() as $batch) {
+            $issues[] = ['code' => 'uncommitted_import', 'sid' => null, 'line_id' => null, 'message' => 'Import '.$batch->original_filename.' belum diselesaikan.', 'severity' => 'blocking', 'reason' => null];
+            if ($batch->input_version !== $this->input_version) {
+                $issues[] = ['code' => 'stale_source', 'sid' => null, 'line_id' => null, 'message' => 'Preview '.$batch->original_filename.' perlu validasi ulang terhadap input terbaru.', 'severity' => 'blocking', 'reason' => null];
+            }
+        }
+        return $issues;
+    }
+
+    public function readinessIssues(): array
+    {
+        $issues = array_values(array_filter($this->calculation['issues'] ?? [], fn($i) => !in_array($i['code'], ['uncommitted_import', 'stale_source'])));
+        array_push($issues, ...$this->pendingSourceIssues());
+        $relocations = $this->pendingRelocationAddresses();
+        $previousName = $relocations->isNotEmpty() ? $this->previousPeriod()?->period_name : null;
+        foreach ($relocations as $sid => $line) {
+            $issues[] = ['code' => 'relocation_address', 'sid' => $sid, 'line_id' => $line->id, 'message' => 'SSID ditandai relokasi di tagihan '.$previousName.'; alamat barunya belum diisi.', 'severity' => 'blocking', 'reason' => null];
+        }
+        if (!$this->calculationIsCurrent()) {
+            $issues[] = ['code' => 'stale_calculation', 'sid' => null, 'line_id' => null, 'message' => 'Perhitungan belum tersedia atau input telah berubah. Hitung ulang sebelum finalisasi.', 'severity' => 'blocking', 'reason' => null];
+        }
+        return $issues;
+    }
+
+    /**
+     * The invoice period of the preceding month (AGU26 for SEP26), if it exists.
+     */
+    public function previousPeriod(): ?self
+    {
+        $previous = Carbon::create($this->year, $this->month, 1)->subMonthNoOverflow();
+
+        return self::where('year', $previous->year)->where('month', $previous->month)->first();
+    }
+
+    /**
+     * Name of the following invoice month, e.g. "September 2026" for AGU26.
+     */
+    public function getNextPeriodNameAttribute(): string
+    {
+        $next = Carbon::create($this->year, $this->month, 1)->addMonthNoOverflow();
+
+        return self::MONTH_NAMES[$next->month].' '.$next->year;
+    }
+
+    /**
+     * SIDs flagged "Relokasi" without a new address in the previous month. Their new address must be entered here.
+     */
+    public function relocationFlaggedSids(): \Illuminate\Support\Collection
+    {
+        $previous = $this->previousPeriod();
+        if (! $previous) {
+            return collect();
+        }
+
+        return $previous->serviceEvents()->where('event_type', 'relokasi')->get()
+            ->filter(fn ($event) => empty($event->attributes['new_address']))->pluck('sid')->unique()->values();
+    }
+
+    /**
+     * Lines of relocated SIDs whose new address has not been entered yet, keyed by SID.
+     */
+    public function pendingRelocationAddresses(): \Illuminate\Support\Collection
+    {
+        $flagged = $this->relocationFlaggedSids();
+        if ($flagged->isEmpty()) {
+            return collect();
+        }
+
+        return $this->lines()->with('bankJatimLink')->get()
+            ->filter(fn ($line) => $flagged->contains($line->billingSid()) && empty($line->new_address))
+            ->keyBy(fn ($line) => $line->billingSid());
+    }
+
+    public function previousApprovedRevision(): ?InvoiceRevision
+    {
+        return InvoiceRevision::where('invoice_revisions.status', 'ready')->whereHas('invoicePeriod', fn($q) => $q->where(fn($q) => $q->where('year', '<', $this->year)->orWhere(fn($q) => $q->where('year', $this->year)->where('month', '<', $this->month))))->join('invoice_periods as prior_periods', 'prior_periods.id', '=', 'invoice_revisions.invoice_period_id')->orderByDesc('prior_periods.year')->orderByDesc('prior_periods.month')->orderByDesc('invoice_revisions.version')->select('invoice_revisions.*')->first();
     }
 
     /**
@@ -167,7 +282,7 @@ class InvoicePeriod extends Model
      */
     public static function generateStartDate(int $month, int $year): Carbon
     {
-        return Carbon::create($year, $month, 1)->startOfDay();
+        return Carbon::create($year, $month, 1)->startOfDay()->subMonthNoOverflow();
     }
 
     /**
@@ -177,8 +292,7 @@ class InvoicePeriod extends Model
      */
     public static function generateEndDate(int $month, int $year): Carbon
     {
-        $day = $month == 12 ? 31 : 30;
-        return Carbon::create($year, $month, $day)->endOfDay();
+        return self::generateStartDate($month, $year)->endOfMonth();
     }
 
     /**
@@ -212,6 +326,43 @@ class InvoicePeriod extends Model
     public function getPeriodNameAttribute(): string
     {
         return $this->month_name . ' ' . $this->year;
+    }
+
+    /**
+     * Usage month billed by this invoice. Contoh: invoice Agustus 2026 → "Juli 2026"
+     */
+    public function getUsageNameAttribute(): string
+    {
+        return self::MONTH_NAMES[$this->start_date->month].' '.$this->start_date->year;
+    }
+
+    /**
+     * Plain-language progress for operators.
+     *
+     * @return array{key: string, label: string, badge: string}
+     */
+    public function workflowState(?InvoiceRevision $latest = null): array
+    {
+        if ($this->isLocked()) {
+            $latest ??= $this->revisions()->latest('version')->first();
+
+            return match ($latest?->status) {
+                'ready' => ['key' => 'issued', 'label' => 'Terbit · file siap', 'badge' => 'badge-success'],
+                'failed' => ['key' => 'failed', 'label' => 'Terkunci · file gagal dibuat', 'badge' => 'badge-danger'],
+                default => ['key' => 'generating', 'label' => 'Terkunci · file sedang dibuat', 'badge' => 'badge-info'],
+            };
+        }
+        if ($this->calculationIsCurrent()) {
+            return ['key' => 'calculated', 'label' => 'Sudah dihitung', 'badge' => 'badge-info'];
+        }
+        if ($this->status === self::STATUS_REVISION) {
+            return ['key' => 'revision', 'label' => 'Revisi', 'badge' => 'badge-warning'];
+        }
+        if ($this->lines()->exists()) {
+            return ['key' => 'filling', 'label' => 'Sedang diisi', 'badge' => 'badge-warning'];
+        }
+
+        return ['key' => 'new', 'label' => 'Baru', 'badge' => 'badge-gray'];
     }
 
     /**
@@ -307,6 +458,27 @@ class InvoicePeriod extends Model
     }
 
     /**
+     * Default invoice number: the latest earlier period's number plus the months between them
+     * (<digits>-<YYYYMM>); falls back to the profile prefix when no earlier number exists.
+     */
+    public static function nextInvoiceNumber(int $year, int $month, array $settings = []): string
+    {
+        $suffix = Carbon::create($year, $month, 1)->format('Ym');
+        $earlier = static::query()->where(fn ($q) => $q->where('year', '<', $year)->orWhere(fn ($q) => $q->where('year', $year)->where('month', '<', $month)))
+            ->orderByDesc('year')->orderByDesc('month')->cursor();
+
+        foreach ($earlier as $previous) {
+            if (preg_match('/^(\d+)-\d{6}$/', (string) ($previous->invoice_metadata['invoice_number'] ?? ''), $m)) {
+                $gap = ($year * 12 + $month) - ($previous->year * 12 + $previous->month);
+
+                return str_pad((string) BigInteger::of($m[1])->plus($gap), strlen($m[1]), '0', STR_PAD_LEFT).'-'.$suffix;
+            }
+        }
+
+        return ($settings['invoice_prefix'] ?? '4807060000210').'-'.$suffix;
+    }
+
+    /**
      * Boot method untuk event model
      */
     protected static function boot()
@@ -325,7 +497,19 @@ class InvoicePeriod extends Model
                 $period->end_date = self::generateEndDate($period->month, $period->year);
             }
             if (!$period->billing_days) {
-                $period->billing_days = 30;
+                $period->billing_days = $period->start_date->daysInMonth;
+            }
+            $period->billing_profile_id ??= BillingProfile::where('is_active', true)->orderByDesc('version')->value('id');
+            $settings = $period->billingProfile?->settings ?? [];
+            $date = Carbon::create($period->year, $period->month, 1);
+            $period->invoice_metadata ??= [
+                'invoice_number' => self::nextInvoiceNumber($period->year, $period->month, $settings),
+                'issue_date' => $date->toDateString(), 'due_date' => $date->copy()->day(min($settings['due_day'] ?? 20, $date->daysInMonth))->toDateString(),
+            ];
+        });
+        static::deleting(function ($period) {
+            if ($period->isLocked() || $period->revisions()->exists()) {
+                throw new \LogicException('Periode dengan riwayat invoice tidak dapat dihapus.');
             }
         });
     }

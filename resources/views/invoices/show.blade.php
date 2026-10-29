@@ -47,13 +47,11 @@
                 </div>
                 <div>
                     <label class="block text-sm text-gray-500 mb-1">Snapshot</label>
-                    <a href="{{ route('snapshots.show', $invoice->snapshot) }}" class="text-red-600 hover:text-red-700 font-medium">
-                        {{ $invoice->snapshot->name ?? '-' }}
-                    </a>
+                    <p>{{ $invoice->invoicePeriod?->period_name ?? $invoice->snapshot?->name ?? 'Riwayat lama' }}</p>
                 </div>
                 <div>
                     <label class="block text-sm text-gray-500 mb-1">Periode</label>
-                    <p class="text-gray-900">{{ $invoice->snapshot->period ?? '-' }}</p>
+                    <p class="text-gray-900">{{ $invoice->invoicePeriod?->period_name ?? $invoice->snapshot?->period ?? '-' }}</p>
                 </div>
                 <div>
                     <label class="block text-sm text-gray-500 mb-1">Total Lokasi</label>
@@ -112,4 +110,5 @@
         </div>
     </div>
 </div>
+@include('billing.revisions', ['revisions' => $invoice->revisions->sortByDesc('version')])
 @endsection

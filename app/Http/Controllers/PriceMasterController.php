@@ -3,6 +3,7 @@
 namespace App\Http\Controllers;
 
 use App\Models\PriceMaster;
+use App\Services\Billing\TaxRate;
 use Illuminate\Http\Request;
 
 class PriceMasterController extends Controller
@@ -20,6 +21,7 @@ class PriceMasterController extends Controller
             'title' => 'Master Harga',
             'subtitle' => 'Daftar Harga Layanan',
             'priceMasters' => $priceMasters,
+            'ppnRate' => TaxRate::current(),
         ]);
     }
 

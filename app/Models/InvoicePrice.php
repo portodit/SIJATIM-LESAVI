@@ -8,6 +8,7 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
 class InvoicePrice extends Model
 {
+    use \App\Models\Concerns\ProtectsInvoiceInputs;
     use HasFactory;
 
     protected $table = 'invoice_prices';
@@ -45,15 +46,8 @@ class InvoicePrice extends Model
      * Hitung total dari komponen harga
      * Formula Excel: =SUM(Y:AD)
      */
-    public function calculateTotal(): float
+    public function calculateTotal(): ?float
     {
-        return (
-            ($this->harga_eksisting ?? 0) +
-            ($this->harga_upgrade ?? 0) +
-            ($this->harga_downgrade ?? 0) +
-            ($this->harga_cabut_prorate ?? 0) +
-            ($this->harga_psb ?? 0) +
-            ($this->harga_relokasi ?? 0)
-        );
+        return $this->total === null ? null : (float)$this->total;
     }
 }

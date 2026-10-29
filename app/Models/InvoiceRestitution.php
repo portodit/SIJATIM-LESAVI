@@ -2,6 +2,7 @@
 
 namespace App\Models;
 
+use App\Models\Concerns\ProtectsInvoiceInputs;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
@@ -9,6 +10,7 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
 class InvoiceRestitution extends Model
 {
     use HasFactory;
+    use ProtectsInvoiceInputs;
 
     protected $table = 'invoice_restitutions';
 
@@ -33,22 +35,5 @@ class InvoiceRestitution extends Model
         return $this->belongsTo(InvoiceLine::class);
     }
 
-    /**
-     * Hitung Restitusi Over SLA
-     * Formula Excel: =IF(SLA < 99%, ((Availability - Downtime)/720)*HargaEksisting, 0)
-     */
-    public static function calculateRestitusiOverSla(?float $slaActual, ?float $hargaEksisting): float
-    {
-        if ($slaActual === null || $hargaEksisting === null) {
-            return 0;
-        }
-
-        if ($slaActual < 0.99) {
-            // ((720 - downtime_hours) / 720) * harga
-            // Asumsi 720 jam per bulan
-            return (0.01) * $hargaEksisting; // Simplified
-        }
-
-        return 0;
-    }
+    // Compatibility projection only. InvoiceCalculator owns all credit calculations.
 }

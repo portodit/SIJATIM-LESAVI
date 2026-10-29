@@ -2,12 +2,14 @@
 
 namespace App\Models;
 
+use App\Services\Billing\TaxRate;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
 class PriceMaster extends Model
 {
+    public function contract() { return $this->belongsTo(AddendumContract::class, 'addendum_contract_id'); }
     use HasFactory;
 
     protected $table = 'price_masters';
@@ -25,6 +27,7 @@ class PriceMaster extends Model
         'effective_end_date',
         'notes',
         'is_active',
+        'addendum_contract_id', 'router_mode', 'sid', 'relocation_price',
     ];
 
     protected $casts = [
@@ -35,10 +38,8 @@ class PriceMaster extends Model
         'effective_start_date' => 'date',
         'effective_end_date' => 'date',
         'is_active' => 'boolean',
+        'relocation_price' => 'decimal:2',
     ];
-
-    // Konstanta PPN
-    public const PPN_RATE = 0.11; // 11%
 
     /**
      * Relasi: Location Category
@@ -104,22 +105,22 @@ class PriceMaster extends Model
     }
 
     /**
-     * Hitung harga dengan PPN
+     * Hitung harga dengan PPN (tarif PPN dari Master Harga, kecuali $rate diberikan)
      */
-    public function calculateWithPpn(): float
+    public function calculateWithPpn(?string $rate = null): float
     {
-        return (float) $this->monthly_price * (1 + self::PPN_RATE);
+        return (float) $this->monthly_price * (1 + (float) ($rate ?? TaxRate::current()));
     }
 
     /**
-     * Hitung biaya PSB dengan PPN
+     * Hitung biaya PSB dengan PPN (tarif PPN dari Master Harga, kecuali $rate diberikan)
      */
-    public function calculateInstallationWithPpn(): float
+    public function calculateInstallationWithPpn(?string $rate = null): float
     {
         if (!$this->installation_price) {
             return 0;
         }
-        return (float) $this->installation_price * (1 + self::PPN_RATE);
+        return (float) $this->installation_price * (1 + (float) ($rate ?? TaxRate::current()));
     }
 
     /**

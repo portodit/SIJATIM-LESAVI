@@ -64,9 +64,6 @@ class InvoiceSummary extends Model
         'grand_total' => 'decimal:2',
     ];
 
-    // Konstanta
-    public const PPN_RATE = 0.11;
-
     /**
      * Relasi: Invoice Period
      */
@@ -80,58 +77,11 @@ class InvoiceSummary extends Model
      */
     public static function generateFromLines(InvoicePeriod $period): self
     {
-        $lines = $period->lines()->with(['typeOrder', 'bankJatimLink'])->get();
-
-        $summary = [
-            'invoice_period_id' => $period->id,
-            'total_locations' => $lines->count(),
-
-            // Existing
-            'existing_count' => $lines->where('typeOrder.type_order_code', 'existing')->count(),
-            'existing_total' => $lines->where('typeOrder.type_order_code', 'existing')->sum('price_total'),
-
-            // PSB
-            'psb_count' => $lines->where('typeOrder.type_order_code', 'pasang_baru')->count(),
-            'psb_total' => $lines->where('typeOrder.type_order_code', 'pasang_baru')->sum('price_total'),
-
-            // Relokasi
-            'relocation_count' => $lines->where('typeOrder.type_order_code', 'relokasi')->count(),
-            'relocation_total' => $lines->where('typeOrder.type_order_code', 'relokasi')->sum('price_total'),
-
-            // Upgrade
-            'upgrade_count' => $lines->where('typeOrder.type_order_code', 'upgrade')->count(),
-            'upgrade_total' => $lines->where('typeOrder.type_order_code', 'upgrade')->sum('price_total'),
-
-            // Downgrade
-            'downgrade_count' => $lines->where('typeOrder.type_order_code', 'downgrade')->count(),
-            'downgrade_total' => $lines->where('typeOrder.type_order_code', 'downgrade')->sum('price_total'),
-
-            // Pemutusan
-            'termination_count' => $lines->where('typeOrder.type_order_code', 'pemutusan')->count(),
-            'termination_total' => $lines->where('typeOrder.type_order_code', 'pemutusan')->sum('price_total'),
-
-            // SLA & Downtime
-            'below_sla_count' => $lines->filter(fn($line) => $line->isBelowSla())->count(),
-            'high_downtime_count' => $lines->filter(fn($line) => $line->getTotalDowntimeHours() > 7)->count(),
-
-            // Restitusi
-            'restitution_manual_total' => $lines->sum('restitution_manual'),
-            'restitution_over_sla_total' => $lines->sum('restitution_over_sla'),
-            'restitution_grand_total' => $lines->sum('restitution_total'),
-
-            // Tagihan
-            'subtotal_before_restitution' => $lines->sum('price_total'),
-            'subtotal_after_restitution' => $lines->sum('price_after_restitution'),
-        ];
-
-        // Hitung PPN dan Grand Total
-        $summary['ppn_amount'] = $summary['subtotal_after_restitution'] * self::PPN_RATE;
-        $summary['grand_total'] = $summary['subtotal_after_restitution'] + $summary['ppn_amount'];
-
-        return self::updateOrCreate(
-            ['invoice_period_id' => $period->id],
-            $summary
-        );
+        $period->refresh();
+        if (!$period->calculationIsCurrent()) {
+            throw new \LogicException('Calculate the period with InvoiceCalculator before reading summary.');
+        }
+        return self::where('invoice_period_id', $period->id)->firstOrFail();
     }
 
     /**

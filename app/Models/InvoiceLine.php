@@ -7,9 +7,11 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\Relations\HasOne;
+use Illuminate\Support\Facades\DB;
 
 class InvoiceLine extends Model
 {
+    use \App\Models\Concerns\ProtectsInvoiceInputs;
     use HasFactory;
 
     protected $table = 'invoice_lines';
@@ -54,6 +56,7 @@ class InvoiceLine extends Model
         'bandwidth_status',
         'price_status',
         'validation_notes',
+        'downtime_seconds', 'service_snapshot', 'legacy_inputs', 'traffic_exception_reason',
     ];
 
     protected $casts = [
@@ -76,15 +79,29 @@ class InvoiceLine extends Model
         'restitution_over_sla' => 'decimal:2',
         'restitution_total' => 'decimal:2',
         'price_after_restitution' => 'decimal:2',
-        'usage_avg_existing' => 'integer',
-        'usage_avg_upgrade' => 'integer',
-        'traffic_total_existing' => 'integer',
-        'traffic_total_upgrade' => 'integer',
+        'usage_avg_existing' => 'decimal:12', 'usage_avg_upgrade' => 'decimal:12',
+        'traffic_total_existing' => 'decimal:6', 'traffic_total_upgrade' => 'decimal:6',
+        'downtime_seconds' => 'integer', 'service_snapshot' => 'array', 'legacy_inputs' => 'array',
     ];
 
     // Konstanta
-    public const SLA_TARGET_DEFAULT = 0.99; // 99%
+    public const SLA_TARGET_DEFAULT = (float) \App\Services\Billing\BillingMath::SLA_TARGET;
     public const BILLING_DAYS_DEFAULT = 30;
+
+    protected static function booted(): void
+    {
+        static::saving(function ($line) {
+            $line->sla_target = \App\Services\Billing\BillingMath::SLA_TARGET;
+        });
+    }
+
+    /**
+     * SID used for billing inputs (events, downtime): snapshot first, then master, then imported text.
+     */
+    public function billingSid(): string
+    {
+        return (string) ($this->service_snapshot['sid'] ?? $this->bankJatimLink?->ssid ?? $this->ssid_temp);
+    }
 
     /**
      * Relasi: Invoice Period
@@ -99,7 +116,7 @@ class InvoiceLine extends Model
      */
     public function bankJatimLink(): BelongsTo
     {
-        return $this->belongsTo(BankJatimLink::class, 'bank_jatim_link_id');
+        return $this->belongsTo(BankJatimLink::class, 'bank_jatim_link_id')->withTrashed();
     }
 
     /**
@@ -198,7 +215,7 @@ class InvoiceLine extends Model
         if ($this->sla_actual === null) {
             return false;
         }
-        return $this->sla_actual < ($this->sla_target ?? self::SLA_TARGET_DEFAULT);
+        return $this->sla_actual < self::SLA_TARGET_DEFAULT;
     }
 
     /**
@@ -206,64 +223,84 @@ class InvoiceLine extends Model
      */
     public function getTotalDowntimeHours(): float
     {
-        return ($this->downtime_days * 24) + $this->downtime_hours + ($this->downtime_minutes / 60);
+        return $this->getTotalDowntimeSeconds() / 3600;
+    }
+
+    /**
+     * Hitung total downtime dalam detik
+     */
+    public function getTotalDowntimeSeconds(): int
+    {
+        return $this->downtime_seconds ?? (($this->downtime_days * 86400) + ($this->downtime_hours * 3600) + ($this->downtime_minutes * 60));
+    }
+
+    /**
+     * Pecah total detik downtime menjadi days/hours/minutes.
+     * Sisa di bawah 1 menit dibuang (skema tidak punya kolom detik).
+     */
+    public static function downtimeSecondsToParts(int $totalSeconds): array
+    {
+        $totalSeconds = max(0, $totalSeconds);
+        $days = intdiv($totalSeconds, 86400);
+        $remainder = $totalSeconds % 86400;
+        $hours = intdiv($remainder, 3600);
+        $minutes = intdiv($remainder % 3600, 60);
+
+        return [
+            'downtime_seconds' => $totalSeconds,
+            'downtime_days' => $days,
+            'downtime_hours' => $hours,
+            'downtime_minutes' => $minutes,
+        ];
+    }
+
+    /**
+     * Hitung ulang seluruh field turunan (availability, SLA, harga, restitusi)
+     * dan simpan. Dipanggil setiap kali data Step 2 (bandwidth/downtime/harga)
+     * berubah, supaya Step 3 (preview) bisa langsung baca kolom yang sudah tersimpan
+     * tanpa perlu hitung ulang setiap render.
+     */
+    public function recalculateDerived(): void
+    {
+        // Legacy input endpoints may call this; authoritative calculations are explicit period operations.
+        $this->sla_actual = null;
+        $this->price_total = null;
+        $this->price_after_restitution = null;
+        $this->save();
     }
 
     /**
      * Hitung SLA Actual
      */
-    public function calculateSlaActual(int $totalHoursPerMonth = 720): float
+    public function calculateSlaActual(?int $totalHoursPerMonth = null): ?float
     {
-        $downtimeHours = $this->getTotalDowntimeHours();
-        $availability = $totalHoursPerMonth - $downtimeHours;
-        return $availability / $totalHoursPerMonth;
+        if ($this->downtime_seconds === null) { return null; }
+        return (float) \App\Services\Billing\BillingMath::sla($this->downtime_seconds, $this->invoicePeriod->billing_days * 86400);
     }
 
     /**
      * Hitung restitusi over SLA
      */
-    public function calculateRestitutionOverSla(): float
+    public function calculateRestitutionOverSla(): ?float
     {
-        $slaTarget = $this->sla_target ?? self::SLA_TARGET_DEFAULT;
-
-        if ($this->sla_actual >= $slaTarget) {
-            return 0;
-        }
-
-        $price = $this->price_total ?? 0;
-        $totalHours = 720;
-        $availabilityHours = $this->availability_hours ?? $totalHours;
-
-        // Rumus: ((SLA_Target - SLA_Actual) / Total_Jam) * Harga
-        $diffHours = ($slaTarget * $totalHours) - $availabilityHours;
-        $restitution = ($diffHours / $totalHours) * $price;
-
-        return max(0, $restitution);
+        if($this->price_total === null || $this->downtime_seconds === null) { return null; }
+        return (float) \App\Services\Billing\BillingMath::slaCredit((string)$this->price_total, $this->downtime_seconds, $this->invoicePeriod->billing_days * 86400, \App\Services\Billing\BillingMath::SLA_TARGET);
     }
 
     /**
      * Hitung harga total
      */
-    public function calculatePriceTotal(): float
+    public function calculatePriceTotal(): ?float
     {
-        return (float) (
-            ($this->price_existing ?? 0) +
-            ($this->price_upgrade ?? 0) +
-            ($this->price_downgrade ?? 0) +
-            ($this->price_prorate ?? 0) +
-            ($this->price_psb ?? 0) +
-            ($this->price_relocation ?? 0)
-        );
+        return $this->price_total === null ? null : (float)$this->price_total;
     }
 
     /**
      * Hitung harga setelah restitusi
      */
-    public function calculatePriceAfterRestitution(): float
+    public function calculatePriceAfterRestitution(): ?float
     {
-        $total = $this->price_total ?? $this->calculatePriceTotal();
-        $restitution = $this->restitution_total ?? 0;
-        return max(0, $total - $restitution);
+        return $this->price_after_restitution === null ? null : (float)$this->price_after_restitution;
     }
 
     /**
@@ -280,7 +317,7 @@ class InvoiceLine extends Model
         // Untuk upgrade/downgrade: hitung dari tanggal efektif sampai akhir bulan
         $activeDays = $endOfMonth - $effectiveDay + 1;
 
-        return ($monthlyPrice / $billingDays) * $activeDays;
+        return (float) \App\Services\Billing\BillingMath::prorate((string)$monthlyPrice, $activeDays, $billingDays);
     }
 
     /**
@@ -290,6 +327,47 @@ class InvoiceLine extends Model
     {
         $max = self::where('invoice_period_id', $invoicePeriodId)->max('line_number');
         return ($max ?? 0) + 1;
+    }
+
+    /**
+     * Keep a draft period's lines grouped by branch (jenis kantor) and numbered 1..N.
+     * Branches keep the order in which they first appear; inside a branch the current
+     * order is kept, so a newly added line lands at the end of its own branch.
+     * Locked periods are never renumbered. Returns how many lines changed number.
+     */
+    public static function regroup(InvoicePeriod|int $period): int
+    {
+        $periodId = $period instanceof InvoicePeriod ? $period->id : $period;
+        // Read the stored state: a passed model may be stale.
+        $current = InvoicePeriod::find($periodId);
+        if (! $current || $current->isLocked()) {
+            return 0;
+        }
+
+        return DB::transaction(function () use ($periodId) {
+            $lines = self::where('invoice_period_id', $periodId)->with('bankJatimLink.officeType')
+                ->orderBy('line_number')->orderBy('id')->get(['id', 'line_number', 'bank_jatim_link_id', 'service_snapshot']);
+            $groups = [];
+            foreach ($lines as $line) {
+                // Same source as the calculation snapshot: stored snapshot first, else the master's office type.
+                $snapshot = $line->service_snapshot ?? ['branch' => $line->bankJatimLink?->officeType?->office_type_name];
+                $groups[$snapshot['branch'] ?? '-'][] = $line;
+            }
+            $changed = 0;
+            $number = 0;
+            foreach ($groups as $group) {
+                foreach ($group as $line) {
+                    $number++;
+                    if ($line->line_number !== $number) {
+                        // No unique index on (invoice_period_id, line_number), so a direct update is safe.
+                        DB::table('invoice_lines')->where('id', $line->id)->update(['line_number' => $number]);
+                        $changed++;
+                    }
+                }
+            }
+
+            return $changed;
+        });
     }
 
     /**

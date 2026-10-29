@@ -2,6 +2,7 @@
 
 namespace App\Models;
 
+use App\Models\Concerns\ProtectsInvoiceInputs;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
@@ -9,6 +10,7 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
 class InvoiceSla extends Model
 {
     use HasFactory;
+    use ProtectsInvoiceInputs;
 
     protected $table = 'invoice_slas';
 
@@ -27,6 +29,13 @@ class InvoiceSla extends Model
         'sla_actual' => 'decimal:6',
     ];
 
+    protected static function booted(): void
+    {
+        static::saving(function ($sla) {
+            $sla->sla_pks = \App\Services\Billing\BillingMath::SLA_TARGET;
+        });
+    }
+
     /**
      * Relasi: Invoice Line
      */
@@ -41,10 +50,7 @@ class InvoiceSla extends Model
      */
     public function calculateSlaActual(): ?float
     {
-        if (!$this->availability_hours || $this->availability_hours == 0) {
-            return null;
-        }
-        return ($this->availability_hours - $this->downtime_hours) / $this->availability_hours;
+        return $this->sla_actual === null ? null : (float) $this->sla_actual;
     }
 
     /**
@@ -52,7 +58,7 @@ class InvoiceSla extends Model
      */
     public function isBelowThreshold(): bool
     {
-        return $this->sla_actual !== null && $this->sla_actual < 0.99;
+        return $this->sla_actual !== null && $this->sla_actual < \App\Services\Billing\BillingMath::SLA_TARGET;
     }
 
     /**

@@ -12,6 +12,7 @@ class Invoice extends Model
 
     protected $fillable = [
         'snapshot_id',
+        'invoice_period_id',
         'invoice_number',
         'total_amount',
         'total_locations',
@@ -36,6 +37,9 @@ class Invoice extends Model
     {
         return $this->belongsTo(User::class, 'generated_by');
     }
+
+    public function invoicePeriod(): BelongsTo { return $this->belongsTo(InvoicePeriod::class); }
+    public function revisions() { return $this->hasMany(InvoiceRevision::class); }
 
     public function getFormattedAmountAttribute()
     {
