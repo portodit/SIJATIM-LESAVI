@@ -9,15 +9,13 @@ class TypeOrdersSeeder extends Seeder
 {
     /**
      * Run the database seeds.
-     * Seed master data Type Order
+     * Seed master data Type Order.
+     *
+     * Idempotent: each row is keyed on type_order_code, so it also works on a fresh
+     * database where a migration has already inserted 'multiple_changes'.
      */
     public function run(): void
     {
-        // Check if already seeded
-        if (DB::table('type_orders')->count() > 0) {
-            return;
-        }
-
         $typeOrders = [
             [
                 'type_order_code' => 'existing',
@@ -63,6 +61,13 @@ class TypeOrdersSeeder extends Seeder
             ],
         ];
 
-        DB::table('type_orders')->insert($typeOrders);
+        foreach ($typeOrders as $row) {
+            DB::table('type_orders')->updateOrInsert(
+                ['type_order_code' => $row['type_order_code']],
+                fn (bool $exists) => $exists
+                    ? $row + ['updated_at' => now()]
+                    : $row + ['created_at' => now(), 'updated_at' => now()]
+            );
+        }
     }
 }

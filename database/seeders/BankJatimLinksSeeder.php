@@ -13,7 +13,7 @@ class BankJatimLinksSeeder extends Seeder
 {
     /**
      * Run the database seeds.
-     * Seed master data link dari file CSV SEEDER DATA TERBARU.csv
+     * Seed master data link dari file CSV (path di SIJATIM_LINKS_CSV)
      */
     public function run(): void
     {
@@ -23,14 +23,16 @@ class BankJatimLinksSeeder extends Seeder
             return;
         }
 
-        $csvPath = 'C:/Users/USER/Documents/SEEDER DATA TERBARU.csv';
+        // Path to the CSV comes from .env (SIJATIM_LINKS_CSV). It is only needed when the
+        // committed data package (database/seed-data) is not used.
+        $csvPath = env('SIJATIM_LINKS_CSV');
 
-        if (!file_exists($csvPath)) {
-            $this->command->error("CSV file not found: {$csvPath}");
+        if (!$csvPath || !is_file($csvPath)) {
+            $this->command->info('SIJATIM_LINKS_CSV not set or file not found. Skipping bank_jatim_links import.');
             return;
         }
 
-        $this->command->info('Starting import from SEEDER DATA TERBARU.csv...');
+        $this->command->info('Starting import from ' . basename($csvPath) . '...');
 
         // Load CSV
         $handle = fopen($csvPath, 'r');

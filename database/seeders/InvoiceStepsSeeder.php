@@ -9,15 +9,14 @@ class InvoiceStepsSeeder extends Seeder
 {
     /**
      * Run the database seeds.
-     * Seed master data untuk tahapan invoice Bank Jatim
+     * Seed master data untuk tahapan invoice Bank Jatim.
+     *
+     * Idempotent: each row is keyed on step_code. A step that already exists (the create
+     * migration and later migrations insert and rename these rows) is left as it is, so
+     * the names set by the migrations are not overwritten by the older names below.
      */
     public function run(): void
     {
-        // Check if already seeded
-        if (DB::table('invoice_steps')->count() > 0) {
-            return;
-        }
-
         $steps = [
             [
                 'step_number' => 0,
@@ -61,6 +60,11 @@ class InvoiceStepsSeeder extends Seeder
             ],
         ];
 
-        DB::table('invoice_steps')->insert($steps);
+        foreach ($steps as $step) {
+            DB::table('invoice_steps')->updateOrInsert(
+                ['step_code' => $step['step_code']],
+                fn (bool $exists) => $exists ? [] : $step
+            );
+        }
     }
 }
