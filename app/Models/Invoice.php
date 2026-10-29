@@ -38,11 +38,18 @@ class Invoice extends Model
         return $this->belongsTo(User::class, 'generated_by');
     }
 
-    public function invoicePeriod(): BelongsTo { return $this->belongsTo(InvoicePeriod::class); }
-    public function revisions() { return $this->hasMany(InvoiceRevision::class); }
+    public function invoicePeriod(): BelongsTo
+    {
+        return $this->belongsTo(InvoicePeriod::class);
+    }
+
+    public function revisions()
+    {
+        return $this->hasMany(InvoiceRevision::class);
+    }
 
     public function getFormattedAmountAttribute()
     {
-        return 'Rp ' . number_format($this->total_amount, 0, ',', '.');
+        return 'Rp '.number_format($this->total_amount, 0, ',', '.');
     }
 }

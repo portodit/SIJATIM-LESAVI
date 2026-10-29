@@ -11,7 +11,6 @@ use App\Models\InvoiceAdjustment;
 use App\Models\InvoiceLine;
 use App\Models\InvoicePeriod;
 use App\Models\InvoiceTrafficUsage;
-use App\Services\Billing\InvoiceCalculator;
 use App\Models\LocationCategory;
 use App\Models\OfficeType;
 use App\Models\OutageEvent;
@@ -384,8 +383,12 @@ final class SourceImportService
                         $activeStart = ! empty($snapshot['billing_start_date']) ? Carbon::parse($snapshot['billing_start_date'])->max($p->start_date) : $p->start_date->copy();
                         $activeEnd = ! empty($snapshot['billing_end_date']) ? Carbon::parse($snapshot['billing_end_date'])->min($p->end_date) : $p->end_date->copy();
                         foreach ($p->serviceEvents()->where('sid', $sid)->orderBy('effective_date')->get() as $event) {
-                            if ($event->event_type === 'pasang_baru') $activeStart = $activeStart->max($event->effective_date);
-                            if ($event->event_type === 'pemutusan') $activeEnd = $activeEnd->min($event->effective_date);
+                            if ($event->event_type === 'pasang_baru') {
+                                $activeStart = $activeStart->max($event->effective_date);
+                            }
+                            if ($event->event_type === 'pemutusan') {
+                                $activeEnd = $activeEnd->min($event->effective_date);
+                            }
                         }
                         if ($activeStart->gt($activeEnd)) {
                             $errors[] = 'SSID tidak memiliki jendela aktif untuk downtime pada periode ini.';

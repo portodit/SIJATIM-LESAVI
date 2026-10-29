@@ -4,6 +4,7 @@ namespace App\Services\Billing;
 
 use App\Models\BandwidthOption;
 use App\Models\PriceMaster;
+use Brick\Math\BigDecimal;
 use Carbon\Carbon;
 
 final class TariffResolver
@@ -71,7 +72,7 @@ final class TariffResolver
             && (! $r['sid'] || $r['sid'] === ($service['sid'] ?? null))
             && Carbon::parse($r['effective_start_date'])->startOfDay()->lte($date)
             && (! $r['effective_end_date'] || Carbon::parse($r['effective_end_date'])->endOfDay()->gte($date))
-            && \Brick\Math\BigDecimal::of($r['monthly_price'])->isEqualTo($price));
+            && BigDecimal::of($r['monthly_price'])->isEqualTo($price));
 
         return array_values(array_map(fn ($r) => ['bandwidth_option_id' => $r['bandwidth_option_id'], 'router_mode' => $r['router_mode'], 'location_category_id' => $r['location_category_id']], $found));
     }

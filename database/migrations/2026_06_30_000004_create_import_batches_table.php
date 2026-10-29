@@ -23,8 +23,8 @@ return new class extends Migration
             $table->unsignedInteger('failed_rows')->default(0)->comment('Baris gagal diproses');
             $table->text('error_log')->nullable()->comment('Log error jika ada');
             $table->enum('status', ['pending', 'processing', 'completed', 'failed'])
-                  ->default('pending')
-                  ->comment('Status proses import');
+                ->default('pending')
+                ->comment('Status proses import');
             $table->foreignId('uploaded_by')->nullable()->constrained('users')->nullOnDelete()->comment('User yang upload');
             $table->json('metadata')->nullable()->comment('Metadata tambahan (column mapping, dll)');
             $table->timestamps();

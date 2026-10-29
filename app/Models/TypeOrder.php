@@ -27,10 +27,15 @@ class TypeOrder extends Model
 
     // Type Order codes
     public const CODE_EXISTING = 'existing';
+
     public const CODE_UPGRADE = 'upgrade';
+
     public const CODE_PASANG_BARU = 'pasang_baru';
+
     public const CODE_RELOKASI = 'relokasi';
+
     public const CODE_DOWNGRADE = 'downgrade';
+
     public const CODE_PEMUTUSAN = 'pemutusan';
 
     /**

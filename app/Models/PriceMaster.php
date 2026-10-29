@@ -3,13 +3,18 @@
 namespace App\Models;
 
 use App\Services\Billing\TaxRate;
+use Carbon\Carbon;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
 class PriceMaster extends Model
 {
-    public function contract() { return $this->belongsTo(AddendumContract::class, 'addendum_contract_id'); }
+    public function contract()
+    {
+        return $this->belongsTo(AddendumContract::class, 'addendum_contract_id');
+    }
+
     use HasFactory;
 
     protected $table = 'price_masters';
@@ -79,10 +84,10 @@ class PriceMaster extends Model
     public function scopeEffectiveOn($query, $date)
     {
         return $query->where('effective_start_date', '<=', $date)
-                    ->where(function ($q) use ($date) {
-                        $q->whereNull('effective_end_date')
-                          ->orWhere('effective_end_date', '>=', $date);
-                    });
+            ->where(function ($q) use ($date) {
+                $q->whereNull('effective_end_date')
+                    ->orWhere('effective_end_date', '>=', $date);
+            });
     }
 
     /**
@@ -117,9 +122,10 @@ class PriceMaster extends Model
      */
     public function calculateInstallationWithPpn(?string $rate = null): float
     {
-        if (!$this->installation_price) {
+        if (! $this->installation_price) {
             return 0;
         }
+
         return (float) $this->installation_price * (1 + (float) ($rate ?? TaxRate::current()));
     }
 
@@ -127,8 +133,8 @@ class PriceMaster extends Model
      * Hitung harga prorata
      */
     public function calculateProrate(
-        \Carbon\Carbon $effectiveDate,
-        \Carbon\Carbon $endOfMonth,
+        Carbon $effectiveDate,
+        Carbon $endOfMonth,
         bool $isPasangBaru = false
     ): float {
         $daysInMonth = 30; // Dasar 30 hari Bank jatim
@@ -146,8 +152,8 @@ class PriceMaster extends Model
      */
     public function calculateUpgradeDowngradeProrate(
         self $oldPrice,
-        \Carbon\Carbon $effectiveDate,
-        \Carbon\Carbon $endOfMonth
+        Carbon $effectiveDate,
+        Carbon $endOfMonth
     ): array {
         $daysInMonth = 30;
         $effectiveDay = $effectiveDate->day;

@@ -35,7 +35,7 @@ Route::middleware([
     // Master Harga
     Route::get('/price-masters', [BillingAdministrationController::class, 'index'])->name('price-masters.index');
     Route::post('/billing-masters/ppn', [BillingAdministrationController::class, 'savePpn'])->name('billing-masters.ppn');
-    Route::post('/billing-masters/{section}',[BillingAdministrationController::class, 'save'])->name('billing-masters.save');
+    Route::post('/billing-masters/{section}', [BillingAdministrationController::class, 'save'])->name('billing-masters.save');
 
     // Step 1: services, changes, downtime
     Route::post('/invoice-periods/{invoicePeriod}/metadata', [BillingWorkflowController::class, 'metadata'])->name('billing.metadata');

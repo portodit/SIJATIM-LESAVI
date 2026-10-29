@@ -1,18 +1,21 @@
 <?php
+
 namespace App\Models;
 
+use App\Services\Billing\BillingMath;
 use Illuminate\Database\Eloquent\Model;
 
 class BillingProfile extends Model
 {
     protected $guarded = [];
+
     protected $casts = ['settings' => 'array', 'is_active' => 'boolean'];
 
     protected static function booted(): void
     {
         static::creating(function ($profile) {
             $settings = $profile->settings ?? [];
-            $settings['sla_target'] = \App\Services\Billing\BillingMath::SLA_TARGET;
+            $settings['sla_target'] = BillingMath::SLA_TARGET;
             $profile->settings = $settings;
         });
         static::updating(function ($profile) {

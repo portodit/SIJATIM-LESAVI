@@ -29,7 +29,7 @@ return new class extends Migration
 
             // Hasil comparison
             $table->enum('comparison_result', ['match', 'upgrade', 'downgrade', 'not_in_eos', 'not_in_invoice', 'different'])->nullable()
-                  ->comment('Hasil perbandingan');
+                ->comment('Hasil perbandingan');
             $table->text('notes')->nullable()->comment('Catatan jika ada perbedaan');
 
             $table->timestamps();

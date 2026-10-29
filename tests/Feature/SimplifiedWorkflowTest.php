@@ -8,16 +8,17 @@ use App\Models\InvoiceLine;
 use App\Models\InvoicePeriod;
 use App\Models\LocationCategory;
 use App\Models\OfficeType;
+use App\Models\OutageEvent;
 use App\Models\PriceMaster;
 use App\Models\ScheduledServiceChange;
 use App\Models\Service;
 use App\Models\ServiceEvent;
 use App\Models\TypeOrder;
 use App\Models\User;
-use App\Models\OutageEvent;
+use App\Services\Billing\DowntimeConflicts;
 use App\Services\Billing\InvoiceCalculator;
-use App\Services\Billing\SourceImportService;
 use App\Services\Billing\ScheduledChangeApplier;
+use App\Services\Billing\SourceImportService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\DB;
@@ -289,7 +290,7 @@ class SimplifiedWorkflowTest extends TestCase
         $this->post(route('imports.conflicts', $batch), ['choices' => [$row->id => 'use_file']])->assertRedirect();
         $this->assertSame('valid', $row->fresh()->status);
         $this->post(route('imports.commit', $batch))->assertRedirect(route('invoice-periods.step1', $p));
-        $active = \App\Services\Billing\DowntimeConflicts::active($p->fresh(), $master->ssid);
+        $active = DowntimeConflicts::active($p->fresh(), $master->ssid);
         $this->assertSame(7200, $active->sole()->duration_seconds);
         $old = $p->outages()->where('review_status', 'excluded')->sole();
         $this->assertSame(3600, $old->duration_seconds);
@@ -298,7 +299,7 @@ class SimplifiedWorkflowTest extends TestCase
 
         // Withdrawing the file brings the earlier value back.
         $this->post(route('imports.discard', $batch), ['reason' => 'File salah'])->assertRedirect();
-        $this->assertSame(3600, \App\Services\Billing\DowntimeConflicts::active($p->fresh(), $master->ssid)->sole()->duration_seconds);
+        $this->assertSame(3600, DowntimeConflicts::active($p->fresh(), $master->ssid)->sole()->duration_seconds);
         $this->assertSame(0, $p->outages()->where('import_batch_id', $batch->id)->count());
     }
 
@@ -588,6 +589,6 @@ final class DowntimeConflictsProbe
 {
     public static function sole(InvoicePeriod $period, string $sid): OutageEvent
     {
-        return \App\Services\Billing\DowntimeConflicts::active($period->fresh(), $sid)->sole();
+        return DowntimeConflicts::active($period->fresh(), $sid)->sole();
     }
 }

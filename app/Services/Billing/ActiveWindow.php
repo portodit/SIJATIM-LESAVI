@@ -3,6 +3,7 @@
 namespace App\Services\Billing;
 
 use App\Models\InvoicePeriod;
+use App\Models\ServiceEvent;
 use Illuminate\Support\Carbon;
 
 /**
@@ -13,7 +14,7 @@ use Illuminate\Support\Carbon;
 class ActiveWindow
 {
     /**
-     * @param  iterable<\App\Models\ServiceEvent|array>  $events
+     * @param  iterable<ServiceEvent|array>  $events
      * @return array{start: string, end: string, seconds: int}|null null when the service has no active day
      */
     public static function for(InvoicePeriod $period, array $snapshot, iterable $events): ?array

@@ -4,7 +4,6 @@ namespace App\Models;
 
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
-use Illuminate\Database\Eloquent\Relations\HasMany;
 
 class BandwidthOption extends Model
 {
@@ -96,6 +95,7 @@ class BandwidthOption extends Model
         // Pattern untuk Mbps
         if (preg_match('/^(\d+(?:[.,]\d+)?)\s*Mbps$/i', $value, $matches)) {
             $mbps = (float) str_replace(',', '.', $matches[1]);
+
             return (int) round($mbps * 1024);
         }
 
@@ -107,6 +107,7 @@ class BandwidthOption extends Model
         // Pattern untuk Gbps
         if (preg_match('/^(\d+(?:[.,]\d+)?)\s*Gbps$/i', $value, $matches)) {
             $gbps = (float) str_replace(',', '.', $matches[1]);
+
             return (int) round($gbps * 1024 * 1024);
         }
 

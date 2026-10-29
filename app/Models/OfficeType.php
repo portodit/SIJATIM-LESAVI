@@ -82,6 +82,7 @@ class OfficeType extends Model
     public function getNextSequenceNumber(): int
     {
         $maxSequence = $this->bankJatimLinks()->max('sequence_in_office_type');
+
         return ($maxSequence ?? 0) + 1;
     }
 }

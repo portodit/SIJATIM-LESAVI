@@ -39,7 +39,7 @@ return new class extends Migration
         ];
 
         foreach ($steps as $step) {
-            \DB::table('invoice_steps')->insert($step);
+            DB::table('invoice_steps')->insert($step);
         }
     }
 

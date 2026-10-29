@@ -5,7 +5,6 @@ namespace App\Models;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
-use Illuminate\Database\Eloquent\Relations\HasMany;
 
 class InvoiceStepStatus extends Model
 {
@@ -35,9 +34,13 @@ class InvoiceStepStatus extends Model
 
     // Status enum
     public const STATUS_NOT_STARTED = 'not_started';
+
     public const STATUS_IN_PROGRESS = 'in_progress';
+
     public const STATUS_COMPLETED = 'completed';
+
     public const STATUS_ERROR = 'error';
+
     public const STATUS_SKIPPED = 'skipped';
 
     /**
@@ -101,7 +104,7 @@ class InvoiceStepStatus extends Model
      */
     public function getStatusBadgeColorAttribute(): string
     {
-        return match($this->status) {
+        return match ($this->status) {
             self::STATUS_NOT_STARTED => 'gray',
             self::STATUS_IN_PROGRESS => 'blue',
             self::STATUS_COMPLETED => 'green',
@@ -116,7 +119,7 @@ class InvoiceStepStatus extends Model
      */
     public function getStatusLabelAttribute(): string
     {
-        return match($this->status) {
+        return match ($this->status) {
             self::STATUS_NOT_STARTED => 'Belum Dimulai',
             self::STATUS_IN_PROGRESS => 'Sedang Dikerjakan',
             self::STATUS_COMPLETED => 'Selesai',

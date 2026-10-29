@@ -2,14 +2,15 @@
 
 namespace App\Models;
 
+use App\Models\Concerns\ProtectsInvoiceInputs;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
 class InvoicePrice extends Model
 {
-    use \App\Models\Concerns\ProtectsInvoiceInputs;
     use HasFactory;
+    use ProtectsInvoiceInputs;
 
     protected $table = 'invoice_prices';
 
@@ -48,6 +49,6 @@ class InvoicePrice extends Model
      */
     public function calculateTotal(): ?float
     {
-        return $this->total === null ? null : (float)$this->total;
+        return $this->total === null ? null : (float) $this->total;
     }
 }

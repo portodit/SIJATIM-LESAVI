@@ -2,6 +2,9 @@
 
 namespace App\Models;
 
+use App\Models\Concerns\ProtectsInvoiceInputs;
+use App\Services\Billing\BillingMath;
+use Carbon\Carbon;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
@@ -10,8 +13,8 @@ use Illuminate\Support\Facades\DB;
 
 class InvoiceLine extends Model
 {
-    use \App\Models\Concerns\ProtectsInvoiceInputs;
     use HasFactory;
+    use ProtectsInvoiceInputs;
 
     protected $table = 'invoice_lines';
 
@@ -84,13 +87,14 @@ class InvoiceLine extends Model
     ];
 
     // Konstanta
-    public const SLA_TARGET_DEFAULT = (float) \App\Services\Billing\BillingMath::SLA_TARGET;
+    public const SLA_TARGET_DEFAULT = (float) BillingMath::SLA_TARGET;
+
     public const BILLING_DAYS_DEFAULT = 30;
 
     protected static function booted(): void
     {
         static::saving(function ($line) {
-            $line->sla_target = \App\Services\Billing\BillingMath::SLA_TARGET;
+            $line->sla_target = BillingMath::SLA_TARGET;
         });
     }
 
@@ -190,6 +194,7 @@ class InvoiceLine extends Model
         if ($this->sla_actual === null) {
             return false;
         }
+
         return $this->sla_actual < self::SLA_TARGET_DEFAULT;
     }
 
@@ -249,8 +254,11 @@ class InvoiceLine extends Model
      */
     public function calculateSlaActual(?int $totalHoursPerMonth = null): ?float
     {
-        if ($this->downtime_seconds === null) { return null; }
-        return (float) \App\Services\Billing\BillingMath::sla($this->downtime_seconds, $this->invoicePeriod->billing_days * 86400);
+        if ($this->downtime_seconds === null) {
+            return null;
+        }
+
+        return (float) BillingMath::sla($this->downtime_seconds, $this->invoicePeriod->billing_days * 86400);
     }
 
     /**
@@ -258,8 +266,11 @@ class InvoiceLine extends Model
      */
     public function calculateRestitutionOverSla(): ?float
     {
-        if($this->price_total === null || $this->downtime_seconds === null) { return null; }
-        return (float) \App\Services\Billing\BillingMath::slaCredit((string)$this->price_total, $this->downtime_seconds, $this->invoicePeriod->billing_days * 86400, \App\Services\Billing\BillingMath::SLA_TARGET);
+        if ($this->price_total === null || $this->downtime_seconds === null) {
+            return null;
+        }
+
+        return (float) BillingMath::slaCredit((string) $this->price_total, $this->downtime_seconds, $this->invoicePeriod->billing_days * 86400, BillingMath::SLA_TARGET);
     }
 
     /**
@@ -267,7 +278,7 @@ class InvoiceLine extends Model
      */
     public function calculatePriceTotal(): ?float
     {
-        return $this->price_total === null ? null : (float)$this->price_total;
+        return $this->price_total === null ? null : (float) $this->price_total;
     }
 
     /**
@@ -275,7 +286,7 @@ class InvoiceLine extends Model
      */
     public function calculatePriceAfterRestitution(): ?float
     {
-        return $this->price_after_restitution === null ? null : (float)$this->price_after_restitution;
+        return $this->price_after_restitution === null ? null : (float) $this->price_after_restitution;
     }
 
     /**
@@ -283,7 +294,7 @@ class InvoiceLine extends Model
      */
     public static function calculateProrate(
         float $monthlyPrice,
-        \Carbon\Carbon $effectiveDate,
+        Carbon $effectiveDate,
         int $billingDays = 30
     ): float {
         $endOfMonth = $effectiveDate->copy()->endOfMonth()->day;
@@ -292,7 +303,7 @@ class InvoiceLine extends Model
         // Untuk upgrade/downgrade: hitung dari tanggal efektif sampai akhir bulan
         $activeDays = $endOfMonth - $effectiveDay + 1;
 
-        return (float) \App\Services\Billing\BillingMath::prorate((string)$monthlyPrice, $activeDays, $billingDays);
+        return (float) BillingMath::prorate((string) $monthlyPrice, $activeDays, $billingDays);
     }
 
     /**
@@ -301,6 +312,7 @@ class InvoiceLine extends Model
     public static function generateLineNumber(int $invoicePeriodId): int
     {
         $max = self::where('invoice_period_id', $invoicePeriodId)->max('line_number');
+
         return ($max ?? 0) + 1;
     }
 
@@ -351,12 +363,12 @@ class InvoiceLine extends Model
     public function isTypeOrderComplete(): bool
     {
         // Type order harus dipilih
-        if (!$this->type_order_id || !$this->typeOrder) {
+        if (! $this->type_order_id || ! $this->typeOrder) {
             return false;
         }
 
         // Existing bandwidth WAJIB selalu ada
-        if (!$this->existing_bandwidth_option_id) {
+        if (! $this->existing_bandwidth_option_id) {
             return false;
         }
 
@@ -365,7 +377,7 @@ class InvoiceLine extends Model
 
         // UPGRADE & DOWNGRADE: perlu upgrade atau downgrade option
         if (in_array($typeOrder->type_order_code, [TypeOrder::CODE_UPGRADE, TypeOrder::CODE_DOWNGRADE])) {
-            if (!$this->upgrade_bandwidth_option_id && !$this->downgrade_bandwidth_option_id) {
+            if (! $this->upgrade_bandwidth_option_id && ! $this->downgrade_bandwidth_option_id) {
                 return false;
             }
         }
@@ -378,9 +390,10 @@ class InvoiceLine extends Model
      */
     public function needsNewBandwidth(): bool
     {
-        if (!$this->typeOrder) {
+        if (! $this->typeOrder) {
             return false;
         }
+
         return $this->typeOrder->needsNewBandwidth();
     }
 }

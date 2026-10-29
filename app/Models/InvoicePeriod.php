@@ -2,13 +2,16 @@
 
 namespace App\Models;
 
+use App\Services\Billing\BillingMath;
+use Brick\Math\BigInteger;
+use Carbon\Carbon;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\Relations\HasOne;
-use Brick\Math\BigInteger;
-use Carbon\Carbon;
+use Illuminate\Support\Collection;
+use Illuminate\Support\Facades\DB;
 
 class InvoicePeriod extends Model
 {
@@ -66,16 +69,24 @@ class InvoicePeriod extends Model
 
     // Status enum
     public const STATUS_DRAFT = 'draft';
+
     public const STATUS_IN_PROGRESS = 'in_progress';
+
     public const STATUS_VALIDATION = 'validation';
+
     public const STATUS_FINALIZED = 'finalized';
+
     public const STATUS_REVISION = 'revision';
+
     public const STATUS_ARCHIVED = 'archived';
 
     // Step codes
     public const STEP_OVERVIEW = 'overview';
+
     public const STEP_SSID_LIST = 'ssid_list';
+
     public const STEP_TYPE_ORDER = 'type_order';
+
     public const STEP_PREVIEW = 'preview';
 
     /**
@@ -102,22 +113,41 @@ class InvoicePeriod extends Model
         return $this->hasMany(InvoiceLine::class);
     }
 
-    public function billingProfile(): BelongsTo { return $this->belongsTo(BillingProfile::class); }
-    public function revisions(): HasMany { return $this->hasMany(InvoiceRevision::class); }
-    public function serviceEvents(): HasMany { return $this->hasMany(ServiceEvent::class); }
-    public function outages(): HasMany { return $this->hasMany(OutageEvent::class); }
-    public function adjustments(): HasMany { return $this->hasMany(InvoiceAdjustment::class); }
+    public function billingProfile(): BelongsTo
+    {
+        return $this->belongsTo(BillingProfile::class);
+    }
+
+    public function revisions(): HasMany
+    {
+        return $this->hasMany(InvoiceRevision::class);
+    }
+
+    public function serviceEvents(): HasMany
+    {
+        return $this->hasMany(ServiceEvent::class);
+    }
+
+    public function outages(): HasMany
+    {
+        return $this->hasMany(OutageEvent::class);
+    }
+
+    public function adjustments(): HasMany
+    {
+        return $this->hasMany(InvoiceAdjustment::class);
+    }
 
     public function markInputsChanged(string $action, array $details = []): void
     {
         abort_if($this->fresh()->isLocked(), 423, 'Periode sudah terkunci. Buat revisi untuk mengubah input.');
-        \Illuminate\Support\Facades\DB::table('invoice_periods')->where('id', $this->id)->update([
-            'input_version' => \Illuminate\Support\Facades\DB::raw('input_version + 1'),
+        DB::table('invoice_periods')->where('id', $this->id)->update([
+            'input_version' => DB::raw('input_version + 1'),
             'calculation' => null, 'calculated_input_version' => null, 'calculated_at' => null,
             'status' => $this->status === self::STATUS_REVISION ? self::STATUS_REVISION : self::STATUS_IN_PROGRESS,
             'updated_at' => now(),
         ]);
-        \Illuminate\Support\Facades\DB::table('billing_audit_events')->insert([
+        DB::table('billing_audit_events')->insert([
             'invoice_period_id' => $this->id, 'action' => $action, 'details' => json_encode($details),
             'user_id' => auth()->id(), 'created_at' => now(), 'updated_at' => now(),
         ]);
@@ -132,7 +162,7 @@ class InvoicePeriod extends Model
         if ($this->isLocked()) {
             return true;
         }
-        $target = (float) \App\Services\Billing\BillingMath::SLA_TARGET;
+        $target = (float) BillingMath::SLA_TARGET;
 
         return (float) ($this->calculation['profile']['settings']['sla_target'] ?? 0) === $target
             && ! collect($this->calculation['lines'] ?? [])->contains(fn ($line) => (float) ($line['sla_target'] ?? 0) !== $target);
@@ -141,27 +171,29 @@ class InvoicePeriod extends Model
     public function pendingSourceIssues(): array
     {
         $issues = [];
-        foreach ($this->importBatches()->whereNull('committed_at')->where('status', '!=', 'discarded')->whereHas('rows', fn($q) => $q->where('status', '!=', 'ignored'))->get() as $batch) {
+        foreach ($this->importBatches()->whereNull('committed_at')->where('status', '!=', 'discarded')->whereHas('rows', fn ($q) => $q->where('status', '!=', 'ignored'))->get() as $batch) {
             $issues[] = ['code' => 'uncommitted_import', 'sid' => null, 'line_id' => null, 'message' => 'Import '.$batch->original_filename.' belum diselesaikan.', 'severity' => 'blocking', 'reason' => null];
             if ($batch->input_version !== $this->input_version) {
                 $issues[] = ['code' => 'stale_source', 'sid' => null, 'line_id' => null, 'message' => 'Preview '.$batch->original_filename.' perlu validasi ulang terhadap input terbaru.', 'severity' => 'blocking', 'reason' => null];
             }
         }
+
         return $issues;
     }
 
     public function readinessIssues(): array
     {
-        $issues = array_values(array_filter($this->calculation['issues'] ?? [], fn($i) => !in_array($i['code'], ['uncommitted_import', 'stale_source'])));
+        $issues = array_values(array_filter($this->calculation['issues'] ?? [], fn ($i) => ! in_array($i['code'], ['uncommitted_import', 'stale_source'])));
         array_push($issues, ...$this->pendingSourceIssues());
         $relocations = $this->pendingRelocationAddresses();
         $previousName = $relocations->isNotEmpty() ? $this->previousPeriod()?->period_name : null;
         foreach ($relocations as $sid => $line) {
             $issues[] = ['code' => 'relocation_address', 'sid' => $sid, 'line_id' => $line->id, 'message' => 'SSID ditandai relokasi di tagihan '.$previousName.'; alamat barunya belum diisi.', 'severity' => 'blocking', 'reason' => null];
         }
-        if (!$this->calculationIsCurrent()) {
+        if (! $this->calculationIsCurrent()) {
             $issues[] = ['code' => 'stale_calculation', 'sid' => null, 'line_id' => null, 'message' => 'Perhitungan belum tersedia atau input telah berubah. Hitung ulang sebelum finalisasi.', 'severity' => 'blocking', 'reason' => null];
         }
+
         return $issues;
     }
 
@@ -188,7 +220,7 @@ class InvoicePeriod extends Model
     /**
      * SIDs flagged "Relokasi" without a new address in the previous month. Their new address must be entered here.
      */
-    public function relocationFlaggedSids(): \Illuminate\Support\Collection
+    public function relocationFlaggedSids(): Collection
     {
         $previous = $this->previousPeriod();
         if (! $previous) {
@@ -202,7 +234,7 @@ class InvoicePeriod extends Model
     /**
      * Lines of relocated SIDs whose new address has not been entered yet, keyed by SID.
      */
-    public function pendingRelocationAddresses(): \Illuminate\Support\Collection
+    public function pendingRelocationAddresses(): Collection
     {
         $flagged = $this->relocationFlaggedSids();
         if ($flagged->isEmpty()) {
@@ -216,7 +248,7 @@ class InvoicePeriod extends Model
 
     public function previousApprovedRevision(): ?InvoiceRevision
     {
-        return InvoiceRevision::where('invoice_revisions.status', 'ready')->whereHas('invoicePeriod', fn($q) => $q->where(fn($q) => $q->where('year', '<', $this->year)->orWhere(fn($q) => $q->where('year', $this->year)->where('month', '<', $this->month))))->join('invoice_periods as prior_periods', 'prior_periods.id', '=', 'invoice_revisions.invoice_period_id')->orderByDesc('prior_periods.year')->orderByDesc('prior_periods.month')->orderByDesc('invoice_revisions.version')->select('invoice_revisions.*')->first();
+        return InvoiceRevision::where('invoice_revisions.status', 'ready')->whereHas('invoicePeriod', fn ($q) => $q->where(fn ($q) => $q->where('year', '<', $this->year)->orWhere(fn ($q) => $q->where('year', $this->year)->where('month', '<', $this->month))))->join('invoice_periods as prior_periods', 'prior_periods.id', '=', 'invoice_revisions.invoice_period_id')->orderByDesc('prior_periods.year')->orderByDesc('prior_periods.month')->orderByDesc('invoice_revisions.version')->select('invoice_revisions.*')->first();
     }
 
     /**
@@ -250,7 +282,8 @@ class InvoicePeriod extends Model
     public static function generatePeriodCode(int $month, int $year): string
     {
         $monthCode = self::MONTH_CODES[$month] ?? strtoupper(substr(date('M', mktime(0, 0, 0, $month, 1)), 0, 3));
-        return $monthCode . substr((string) $year, -2);
+
+        return $monthCode.substr((string) $year, -2);
     }
 
     /**
@@ -301,7 +334,7 @@ class InvoicePeriod extends Model
      */
     public function getPeriodNameAttribute(): string
     {
-        return $this->month_name . ' ' . $this->year;
+        return $this->month_name.' '.$this->year;
     }
 
     /**
@@ -363,7 +396,7 @@ class InvoicePeriod extends Model
      */
     public function canEdit(): bool
     {
-        return !$this->isLocked() && $this->status !== self::STATUS_ARCHIVED;
+        return ! $this->isLocked() && $this->status !== self::STATUS_ARCHIVED;
     }
 
     /**
@@ -371,7 +404,7 @@ class InvoicePeriod extends Model
      */
     public function getStatusBadgeColorAttribute(): string
     {
-        return match($this->status) {
+        return match ($this->status) {
             self::STATUS_DRAFT => 'gray',
             self::STATUS_IN_PROGRESS => 'blue',
             self::STATUS_VALIDATION => 'yellow',
@@ -387,7 +420,7 @@ class InvoicePeriod extends Model
      */
     public function getStatusLabelAttribute(): string
     {
-        return match($this->status) {
+        return match ($this->status) {
             self::STATUS_DRAFT => 'Draft',
             self::STATUS_IN_PROGRESS => 'Sedang Dikerjakan',
             self::STATUS_VALIDATION => 'Validasi',
@@ -452,16 +485,16 @@ class InvoicePeriod extends Model
 
         // Auto-generate period_code, start_date, end_date sebelum create
         static::creating(function ($period) {
-            if (!$period->period_code) {
+            if (! $period->period_code) {
                 $period->period_code = self::generatePeriodCode($period->month, $period->year);
             }
-            if (!$period->start_date) {
+            if (! $period->start_date) {
                 $period->start_date = self::generateStartDate($period->month, $period->year);
             }
-            if (!$period->end_date) {
+            if (! $period->end_date) {
                 $period->end_date = self::generateEndDate($period->month, $period->year);
             }
-            if (!$period->billing_days) {
+            if (! $period->billing_days) {
                 $period->billing_days = $period->start_date->daysInMonth;
             }
             $period->billing_profile_id ??= BillingProfile::where('is_active', true)->orderByDesc('version')->value('id');

@@ -17,9 +17,9 @@ return new class extends Migration
             $table->foreignId('invoice_period_id')->constrained('invoice_periods')->cascadeOnDelete()->comment('Periode invoice');
             $table->foreignId('invoice_step_id')->constrained('invoice_steps')->restrictOnDelete()->comment('Master step');
             $table->enum('status', ['not_started', 'in_progress', 'completed', 'error', 'skipped'])
-                  ->default('not_started')
-                  ->index()
-                  ->comment('Status pengerjaan');
+                ->default('not_started')
+                ->index()
+                ->comment('Status pengerjaan');
             $table->timestamp('started_at')->nullable()->comment('Waktu mulai');
             $table->timestamp('completed_at')->nullable()->comment('Waktu selesai');
             $table->foreignId('completed_by')->nullable()->constrained('users')->nullOnDelete()->comment('User yang selesaikan');

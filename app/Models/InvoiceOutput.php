@@ -33,8 +33,11 @@ class InvoiceOutput extends Model
 
     // Output types
     public const TYPE_EXCEL_INVOICE = 'excel_invoice';
+
     public const TYPE_PDF_CETAK = 'pdf_cetak';
+
     public const TYPE_LAMPIRAN = 'lampiran';
+
     public const TYPE_SUMMARY_PNG = 'summary_png';
 
     /**
@@ -52,7 +55,9 @@ class InvoiceOutput extends Model
 
     // Status
     public const STATUS_DRAFT = 'draft';
+
     public const STATUS_FINAL = 'final';
+
     public const STATUS_ARCHIVED = 'archived';
 
     /**
@@ -63,7 +68,10 @@ class InvoiceOutput extends Model
         return $this->belongsTo(InvoicePeriod::class, 'invoice_period_id');
     }
 
-    public function revision(): BelongsTo { return $this->belongsTo(InvoiceRevision::class, 'invoice_revision_id'); }
+    public function revision(): BelongsTo
+    {
+        return $this->belongsTo(InvoiceRevision::class, 'invoice_revision_id');
+    }
 
     /**
      * Relasi: User yang generate
@@ -110,17 +118,18 @@ class InvoiceOutput extends Model
      */
     public function getFileSizeFormattedAttribute(): string
     {
-        if (!$this->file_size) {
+        if (! $this->file_size) {
             return '-';
         }
 
         $bytes = $this->file_size;
         if ($bytes >= 1048576) {
-            return number_format($bytes / 1048576, 2) . ' MB';
+            return number_format($bytes / 1048576, 2).' MB';
         } elseif ($bytes >= 1024) {
-            return number_format($bytes / 1024, 2) . ' KB';
+            return number_format($bytes / 1024, 2).' KB';
         }
-        return $bytes . ' bytes';
+
+        return $bytes.' bytes';
     }
 
     /**

@@ -11,9 +11,7 @@ return new class extends Migration
         $this->stripNasFrom('invoice_periods', 'invoice_metadata');
     }
 
-    public function down(): void
-    {
-    }
+    public function down(): void {}
 
     private function stripNasFrom(string $table, string $column): void
     {

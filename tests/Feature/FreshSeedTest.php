@@ -3,8 +3,8 @@
 namespace Tests\Feature;
 
 use App\Models\BankJatimLink;
-use Database\Seeders\BankJatimLinksSeeder;
 use Database\Seeders\BandwidthOptionsSeeder;
+use Database\Seeders\BankJatimLinksSeeder;
 use Database\Seeders\InvoiceStepsSeeder;
 use Database\Seeders\LocationCategoriesSeeder;
 use Database\Seeders\OfficeTypesSeeder;

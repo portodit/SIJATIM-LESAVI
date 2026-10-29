@@ -3,8 +3,8 @@
 namespace Database\Seeders;
 
 use App\Models\BankJatimLink;
-use App\Models\OfficeType;
 use App\Models\LocationCategory;
+use App\Models\OfficeType;
 use App\Models\Service;
 use Illuminate\Database\Seeder;
 use Illuminate\Support\Facades\DB;
@@ -20,6 +20,7 @@ class BankJatimLinksSeeder extends Seeder
         // Check if already seeded
         if (DB::table('bank_jatim_links')->count() > 0) {
             $this->command->info('bank_jatim_links already has data. Skipping.');
+
             return;
         }
 
@@ -27,17 +28,19 @@ class BankJatimLinksSeeder extends Seeder
         // committed data package (database/seed-data) is not used.
         $csvPath = env('SIJATIM_LINKS_CSV');
 
-        if (!$csvPath || !is_file($csvPath)) {
+        if (! $csvPath || ! is_file($csvPath)) {
             $this->command->info('SIJATIM_LINKS_CSV not set or file not found. Skipping bank_jatim_links import.');
+
             return;
         }
 
-        $this->command->info('Starting import from ' . basename($csvPath) . '...');
+        $this->command->info('Starting import from '.basename($csvPath).'...');
 
         // Load CSV
         $handle = fopen($csvPath, 'r');
-        if (!$handle) {
+        if (! $handle) {
             $this->command->error("Cannot open CSV file: {$csvPath}");
+
             return;
         }
 
@@ -68,11 +71,15 @@ class BankJatimLinksSeeder extends Seeder
         foreach ($dataLines as $line) {
             $lineNumber++;
             $line = trim($line);
-            if (empty($line)) continue;
+            if (empty($line)) {
+                continue;
+            }
 
             // Parse CSV row
             $data = str_getcsv($line, ',', '"', '');
-            if (count($data) < 5) continue;
+            if (count($data) < 5) {
+                continue;
+            }
 
             // Kolom: NO., JENIS KANTOR, ALAMAT, KATEGORI LOKASI, ID, IP Host Telkom, TANGGAL AKTIVASI
             $no = isset($data[0]) ? trim($data[0]) : '';
@@ -86,20 +93,22 @@ class BankJatimLinksSeeder extends Seeder
             // Skip if SSID empty or is header
             if (empty($ssid) || strtoupper($ssid) === 'ID') {
                 $skipped++;
+
                 continue;
             }
 
             // Match office_type_id
             $officeTypeId = $this->matchOfficeType($jenisKantor, $officeTypes);
-            if (!$officeTypeId) {
+            if (! $officeTypeId) {
                 $this->command->warn("Skipping row {$lineNumber}: Unknown JENIS KANTOR '{$jenisKantor}'");
                 $skipped++;
+
                 continue;
             }
 
             // Match location_category_id
             $locationCategoryId = $this->matchLocationCategory($kategoriLokasi, $locationCategories);
-            if (!$locationCategoryId) {
+            if (! $locationCategoryId) {
                 $this->command->warn("Unknown KATEGORI LOKASI '{$kategoriLokasi}', using default");
                 $locationCategoryId = 1;
             }
@@ -133,13 +142,13 @@ class BankJatimLinksSeeder extends Seeder
         }
 
         // Bulk insert
-        if (!empty($rows)) {
+        if (! empty($rows)) {
             foreach (array_chunk($rows, 100) as $chunk) {
                 BankJatimLink::insert($chunk);
             }
         }
 
-        $this->command->info("Import completed!");
+        $this->command->info('Import completed!');
         $this->command->info("- Total rows in CSV: {$lineNumber}");
         $this->command->info("- Imported: {$matched}");
         $this->command->info("- Skipped: {$skipped}");
@@ -163,11 +172,11 @@ class BankJatimLinksSeeder extends Seeder
             $lookup[strtoupper($ot->office_type_code)] = $ot->id;
 
             // Add normalized variants for fuzzy matching
-            $lookup['N:' . $this->normalizeName($ot->office_type_name)] = $ot->id;
+            $lookup['N:'.$this->normalizeName($ot->office_type_name)] = $ot->id;
 
             // Add common variations (Dr., Hr. prefix)
             $noPrefix = $this->removePrefix($ot->office_type_name, ['Dr.', 'Hr.']);
-            $lookup['V:' . $this->normalizeName($noPrefix)] = $ot->id;
+            $lookup['V:'.$this->normalizeName($noPrefix)] = $ot->id;
         }
 
         return $lookup;
@@ -191,7 +200,7 @@ class BankJatimLinksSeeder extends Seeder
             $lookup[strtoupper($cat->location_category_code)] = $cat->id;
 
             // Add normalized
-            $lookup['N:' . $this->normalizeName($cat->location_category_name)] = $cat->id;
+            $lookup['N:'.$this->normalizeName($cat->location_category_name)] = $cat->id;
         }
 
         return $lookup;
@@ -207,7 +216,7 @@ class BankJatimLinksSeeder extends Seeder
 
         foreach ($services as $svc) {
             $lookup[strtoupper($svc->service_code)] = $svc->id;
-            $lookup['N:' . $this->normalizeName($svc->service_name)] = $svc->id;
+            $lookup['N:'.$this->normalizeName($svc->service_name)] = $svc->id;
         }
 
         return $lookup;
@@ -231,8 +240,8 @@ class BankJatimLinksSeeder extends Seeder
 
         // Normalized lookup
         $normalized = $this->normalizeName($name);
-        if (isset($lookup['N:' . $normalized])) {
-            return $lookup['N:' . $normalized];
+        if (isset($lookup['N:'.$normalized])) {
+            return $lookup['N:'.$normalized];
         }
 
         // Try variations
@@ -242,8 +251,8 @@ class BankJatimLinksSeeder extends Seeder
             if (isset($lookup[$varUpper])) {
                 return $lookup[$varUpper];
             }
-            if (isset($lookup['N:' . $this->normalizeName($var)])) {
-                return $lookup['N:' . $this->normalizeName($var)];
+            if (isset($lookup['N:'.$this->normalizeName($var)])) {
+                return $lookup['N:'.$this->normalizeName($var)];
             }
         }
 
@@ -269,8 +278,8 @@ class BankJatimLinksSeeder extends Seeder
 
         // Normalized lookup
         $normalized = $this->normalizeName($name);
-        if (isset($lookup['N:' . $normalized])) {
-            return $lookup['N:' . $normalized];
+        if (isset($lookup['N:'.$normalized])) {
+            return $lookup['N:'.$normalized];
         }
 
         // Try variations
@@ -296,7 +305,7 @@ class BankJatimLinksSeeder extends Seeder
         // Remove common prefixes
         $noPrefix = $this->removePrefix($name, ['Dr.', 'Hr.']);
         $variations[] = $noPrefix;
-        $variations[] = $noPrefix . ' SUTOMO';
+        $variations[] = $noPrefix.' SUTOMO';
 
         // Add without dot
         $variations[] = str_replace('.', '', $name);
@@ -327,6 +336,7 @@ class BankJatimLinksSeeder extends Seeder
         $name = str_replace('.', '', $name);
         $name = preg_replace('/\s+/', '', $name);
         $name = preg_replace('/[^A-Z0-9]/', '', $name);
+
         return $name;
     }
 
@@ -340,6 +350,7 @@ class BankJatimLinksSeeder extends Seeder
                 return trim(substr($name, strlen($prefix)));
             }
         }
+
         return $name;
     }
 

@@ -29,7 +29,7 @@ return new class extends Migration
 
             // Hasil comparison
             $table->enum('comparison_result', ['match', 'higher', 'lower', 'not_in_addendum', 'not_in_invoice', 'different'])->nullable()
-                  ->comment('Hasil perbandingan');
+                ->comment('Hasil perbandingan');
             $table->decimal('difference', 15, 2)->nullable()->comment('Selisih harga');
             $table->decimal('difference_percent', 8, 4)->nullable()->comment('Persentase selisih');
             $table->text('notes')->nullable()->comment('Catatan');

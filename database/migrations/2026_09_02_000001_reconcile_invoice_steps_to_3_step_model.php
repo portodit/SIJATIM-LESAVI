@@ -28,7 +28,7 @@ return new class extends Migration
         DB::table('invoice_step_statuses')->whereIn('invoice_step_id', $deadIds)->delete();
         DB::table('invoice_steps')->whereIn('step_code', $deadCodes)->delete();
 
-        if (!DB::table('invoice_steps')->where('step_code', 'preview')->exists()) {
+        if (! DB::table('invoice_steps')->where('step_code', 'preview')->exists()) {
             DB::table('invoice_steps')->insert([
                 'step_number' => 3,
                 'step_code' => 'preview',

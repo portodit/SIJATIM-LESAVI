@@ -1,11 +1,17 @@
 <?php
+
 namespace App\Models;
+
+use App\Models\Concerns\ProtectsInvoiceInputs;
 use App\Services\Billing\DowntimeConflicts;
 use Illuminate\Database\Eloquent\Model;
+
 class ServiceEvent extends Model
 {
-    use \App\Models\Concerns\ProtectsInvoiceInputs;
+    use ProtectsInvoiceInputs;
+
     protected $guarded = [];
+
     protected $casts = ['attributes' => 'array', 'source' => 'array', 'effective_date' => 'date'];
 
     protected static function booted(): void

@@ -58,8 +58,9 @@ class Snapshot extends Model
     public function getPeriodAttribute()
     {
         $bulan = ['', 'Januari', 'Februari', 'Maret', 'April', 'Mei', 'Juni',
-                  'Juli', 'Agustus', 'September', 'Oktober', 'November', 'Desember'];
-        return $bulan[$this->period_month] . ' ' . $this->period_year;
+            'Juli', 'Agustus', 'September', 'Oktober', 'November', 'Desember'];
+
+        return $bulan[$this->period_month].' '.$this->period_year;
     }
 
     public function getProgressStepsAttribute()
@@ -85,6 +86,7 @@ class Snapshot extends Model
     {
         $steps = $this->progress_steps;
         $completed = count(array_filter($steps));
+
         return round(($completed / 4) * 100);
     }
 
@@ -112,6 +114,7 @@ class Snapshot extends Model
     public function getStepStatus(string $step): string
     {
         $statuses = $this->step_statuses ?? [];
+
         return $statuses[$step] ?? 'pending';
     }
 
@@ -126,7 +129,8 @@ class Snapshot extends Model
     public function getCompletedStepsCount(): int
     {
         $statuses = $this->step_statuses ?? [];
-        return count(array_filter($statuses, fn($s) => $s === 'completed'));
+
+        return count(array_filter($statuses, fn ($s) => $s === 'completed'));
     }
 
     public function getCurrentStep(): int
@@ -142,6 +146,7 @@ class Snapshot extends Model
                 return $i;
             }
         }
+
         return null;
     }
 
@@ -149,6 +154,7 @@ class Snapshot extends Model
     {
         $totalSteps = count(self::getStepDefinitions());
         $completed = $this->getCompletedStepsCount();
+
         return round(($completed / $totalSteps) * 100);
     }
 }

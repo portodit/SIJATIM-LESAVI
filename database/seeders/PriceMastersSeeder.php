@@ -2,10 +2,10 @@
 
 namespace Database\Seeders;
 
-use App\Models\PriceMaster;
-use App\Models\LocationCategory;
-use App\Models\Service;
 use App\Models\BandwidthOption;
+use App\Models\LocationCategory;
+use App\Models\PriceMaster;
+use App\Models\Service;
 use Illuminate\Database\Seeder;
 use Illuminate\Support\Facades\DB;
 
@@ -20,6 +20,7 @@ class PriceMastersSeeder extends Seeder
         // Check if already seeded
         if (DB::table('price_masters')->count() > 0) {
             $this->command->info('price_masters already has data. Skipping.');
+
             return;
         }
 
@@ -108,8 +109,9 @@ class PriceMastersSeeder extends Seeder
             $svcId = $services[$p['svc']] ?? null;
             $bwId = $bandwidths[$p['bw']] ?? null;
 
-            if (!$locId || !$svcId || !$bwId) {
+            if (! $locId || ! $svcId || ! $bwId) {
                 $this->command->warn("Skipping: loc={$p['loc']}, svc={$p['svc']}, bw={$p['bw']} - not found in master");
+
                 continue;
             }
 
@@ -132,12 +134,12 @@ class PriceMastersSeeder extends Seeder
         }
 
         // Bulk insert
-        if (!empty($rows)) {
+        if (! empty($rows)) {
             foreach (array_chunk($rows, 50) as $chunk) {
                 PriceMaster::insert($chunk);
             }
         }
 
-        $this->command->info('Seeded ' . count($rows) . ' price master records.');
+        $this->command->info('Seeded '.count($rows).' price master records.');
     }
 }

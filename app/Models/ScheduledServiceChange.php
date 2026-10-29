@@ -12,7 +12,9 @@ use Illuminate\Support\Carbon;
 class ScheduledServiceChange extends Model
 {
     public const STATUS_SCHEDULED = 'scheduled';
+
     public const STATUS_APPLIED = 'applied';
+
     public const STATUS_CANCELLED = 'cancelled';
 
     protected $guarded = [];

@@ -3,6 +3,7 @@
 namespace App\Models;
 
 use App\Models\Concerns\ProtectsInvoiceInputs;
+use App\Services\Billing\BillingMath;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
@@ -32,7 +33,7 @@ class InvoiceSla extends Model
     protected static function booted(): void
     {
         static::saving(function ($sla) {
-            $sla->sla_pks = \App\Services\Billing\BillingMath::SLA_TARGET;
+            $sla->sla_pks = BillingMath::SLA_TARGET;
         });
     }
 
@@ -58,7 +59,7 @@ class InvoiceSla extends Model
      */
     public function isBelowThreshold(): bool
     {
-        return $this->sla_actual !== null && $this->sla_actual < \App\Services\Billing\BillingMath::SLA_TARGET;
+        return $this->sla_actual !== null && $this->sla_actual < BillingMath::SLA_TARGET;
     }
 
     /**

@@ -43,6 +43,8 @@ use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Validation\Rule;
+use PhpOffice\PhpSpreadsheet\Spreadsheet;
+use PhpOffice\PhpSpreadsheet\Writer\Xlsx;
 
 class BillingWorkflowController extends Controller
 {
@@ -826,7 +828,7 @@ class BillingWorkflowController extends Controller
     public function downtimeTemplate()
     {
         return response()->streamDownload(function () {
-            $book = new \PhpOffice\PhpSpreadsheet\Spreadsheet;
+            $book = new Spreadsheet;
             $sheet = $book->getActiveSheet();
             $sheet->setTitle('Downtime');
             $sheet->setCellValue('A1', 'SSID');
@@ -838,7 +840,7 @@ class BillingWorkflowController extends Controller
             $sheet->getStyle('B2:B5001')->getNumberFormat()->setFormatCode('0');
             $sheet->freezePane('A2');
             $sheet->setAutoFilter('A1:B1');
-            $writer = new \PhpOffice\PhpSpreadsheet\Writer\Xlsx($book);
+            $writer = new Xlsx($book);
             $writer->save('php://output');
             $book->disconnectWorksheets();
         }, 'Template_Downtime_SIJATIM.xlsx', ['Content-Type' => 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet']);

@@ -1,13 +1,30 @@
 <?php
+
 namespace App\Models;
+
 use Illuminate\Database\Eloquent\Model;
+
 class InvoiceRevision extends Model
 {
     protected $guarded = [];
+
     protected $casts = ['snapshot' => 'array', 'approved_at' => 'datetime', 'generation_started_at' => 'datetime'];
-    public function invoice() { return $this->belongsTo(Invoice::class); }
-    public function invoicePeriod() { return $this->belongsTo(InvoicePeriod::class); }
-    public function outputs() { return $this->hasMany(InvoiceOutput::class); }
+
+    public function invoice()
+    {
+        return $this->belongsTo(Invoice::class);
+    }
+
+    public function invoicePeriod()
+    {
+        return $this->belongsTo(InvoicePeriod::class);
+    }
+
+    public function outputs()
+    {
+        return $this->hasMany(InvoiceOutput::class);
+    }
+
     protected static function booted(): void
     {
         static::updating(function ($revision) {

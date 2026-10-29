@@ -47,7 +47,9 @@ final class WorkbookSourceReader
                         $d[$h] = $row[$i] ?? null;
                     }
                 }
-                if ($simpleDowntimeTemplate) $d['_manual_total_template'] = true;
+                if ($simpleDowntimeTemplate) {
+                    $d['_manual_total_template'] = true;
+                }
                 $this->record($records, $kind, 'CSV', $number, $d, $row);
             }
             fclose($handle);
@@ -116,7 +118,9 @@ final class WorkbookSourceReader
                             $data[$header] = $row[$c] ?? null;
                         }
                     }
-                    if ($simpleDowntimeTemplate) $data['_manual_total_template'] = true;
+                    if ($simpleDowntimeTemplate) {
+                        $data['_manual_total_template'] = true;
+                    }
                     $tableKind = $kind === 'workbook' ? (in_array('event_type', $headers, true) ? 'events' : (in_array('inbound_kbps', $headers, true) ? 'traffic' : (in_array('monthly_price', $headers, true) ? 'tariffs' : (in_array('duration_seconds', $headers, true) ? 'outages' : (in_array('amount', $headers, true) ? 'adjustments' : 'inventory'))))) : $kind;
                     $this->record($records, $tableKind, $title, $r, $data, $row);
                 }

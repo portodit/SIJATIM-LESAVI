@@ -78,9 +78,10 @@ class InvoiceSummary extends Model
     public static function generateFromLines(InvoicePeriod $period): self
     {
         $period->refresh();
-        if (!$period->calculationIsCurrent()) {
+        if (! $period->calculationIsCurrent()) {
             throw new \LogicException('Calculate the period with InvoiceCalculator before reading summary.');
         }
+
         return self::where('invoice_period_id', $period->id)->firstOrFail();
     }
 
@@ -89,6 +90,6 @@ class InvoiceSummary extends Model
      */
     public function formatCurrency(float $value): string
     {
-        return 'Rp ' . number_format($value, 0, ',', '.');
+        return 'Rp '.number_format($value, 0, ',', '.');
     }
 }

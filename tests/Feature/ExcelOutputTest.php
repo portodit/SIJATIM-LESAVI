@@ -98,7 +98,6 @@ class ExcelOutputTest extends TestCase
         return IOFactory::load(Storage::disk('local')->path($output->file_path));
     }
 
-
     /** Writes a (modified) snapshot with the generator and reads the workbook back. */
     private function reissue(array $snapshot): Spreadsheet
     {

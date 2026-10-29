@@ -24,11 +24,11 @@ use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Validation\ValidationException;
-use PHPUnit\Framework\Attributes\DataProvider;
 use PhpOffice\PhpSpreadsheet\Cell\Coordinate;
 use PhpOffice\PhpSpreadsheet\Spreadsheet;
 use PhpOffice\PhpSpreadsheet\Worksheet\Worksheet;
 use PhpOffice\PhpSpreadsheet\Writer\Xlsx;
+use PHPUnit\Framework\Attributes\DataProvider;
 use Tests\TestCase;
 
 /**
@@ -279,8 +279,8 @@ class HistoryImportTest extends TestCase
         $events = ServiceEvent::where('sid', '4700020-9R1')->get();
         $this->assertCount(1, $events);
         $this->assertSame('2025-12-08', $events->sole()->effective_date->toDateString());
-        $this->assertSame([300], \App\Services\Billing\DowntimeConflicts::active($this->period->fresh(), '4700020-9R1')->pluck('duration_seconds')->all());
-        $this->assertSame([50], \App\Services\Billing\DowntimeConflicts::active($this->period->fresh(), '4700020-9R2')->pluck('duration_seconds')->all());
+        $this->assertSame([300], DowntimeConflicts::active($this->period->fresh(), '4700020-9R1')->pluck('duration_seconds')->all());
+        $this->assertSame([50], DowntimeConflicts::active($this->period->fresh(), '4700020-9R2')->pluck('duration_seconds')->all());
     }
 
     // ---------------------------------------------------------------- rule 4: type orders

@@ -42,7 +42,9 @@ class BankJatimLink extends Model
 
     // Link status
     public const STATUS_ACTIVE = 'active';
+
     public const STATUS_INACTIVE = 'inactive';
+
     public const STATUS_TERMINATED = 'terminated';
 
     /**
@@ -179,10 +181,10 @@ class BankJatimLink extends Model
             ->join('office_types', 'bank_jatim_links.office_type_id', '=', 'office_types.id')
             ->where(function ($q) {
                 $q->where('office_types.sort_order', '<', $this->officeType->sort_order)
-                  ->orWhere(function ($q2) {
-                      $q2->where('office_types.sort_order', '=', $this->officeType->sort_order)
-                         ->where('bank_jatim_links.sequence_in_office_type', '<', $this->sequence_in_office_type);
-                  });
+                    ->orWhere(function ($q2) {
+                        $q2->where('office_types.sort_order', '=', $this->officeType->sort_order)
+                            ->where('bank_jatim_links.sequence_in_office_type', '<', $this->sequence_in_office_type);
+                    });
             })
             ->where('bank_jatim_links.link_status', self::STATUS_ACTIVE)
             ->count();
@@ -196,6 +198,7 @@ class BankJatimLink extends Model
     public static function getNextSequenceForOfficeType(int $officeTypeId): int
     {
         $max = self::where('office_type_id', $officeTypeId)->max('sequence_in_office_type');
+
         return ($max ?? 0) + 1;
     }
 

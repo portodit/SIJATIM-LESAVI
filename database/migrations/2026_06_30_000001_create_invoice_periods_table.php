@@ -29,9 +29,9 @@ return new class extends Migration
 
             // Status dan progres
             $table->enum('status', ['draft', 'in_progress', 'validation', 'finalized', 'revision', 'archived'])
-                  ->default('draft')
-                  ->index()
-                  ->comment('Status folder kerja');
+                ->default('draft')
+                ->index()
+                ->comment('Status folder kerja');
             $table->string('current_step_code', 50)->nullable()->index()->comment('Step terakhir dikerjakan');
             $table->unsignedTinyInteger('progress_percentage')->default(0)->comment('Progres 0-100%');
 
