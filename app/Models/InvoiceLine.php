@@ -5,7 +5,6 @@ namespace App\Models;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
-use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\Relations\HasOne;
 use Illuminate\Support\Facades\DB;
 
@@ -152,14 +151,6 @@ class InvoiceLine extends Model
     }
 
     /**
-     * Relasi: Invoice Bandwidth (child table)
-     */
-    public function invoiceBandwidth(): HasOne
-    {
-        return $this->hasOne(InvoiceBandwidth::class);
-    }
-
-    /**
      * Relasi: Invoice Traffic Usage (child table)
      */
     public function trafficUsage(): HasOne
@@ -189,22 +180,6 @@ class InvoiceLine extends Model
     public function price(): HasOne
     {
         return $this->hasOne(InvoicePrice::class);
-    }
-
-    /**
-     * Relasi: Bandwidth Benchmark Results
-     */
-    public function bandwidthBenchmarks(): HasMany
-    {
-        return $this->hasMany(BandwidthBenchmarkResult::class);
-    }
-
-    /**
-     * Relasi: Price Benchmark Results
-     */
-    public function priceBenchmarks(): HasMany
-    {
-        return $this->hasMany(PriceBenchmarkResult::class);
     }
 
     /**

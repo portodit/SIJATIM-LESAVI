@@ -75,7 +75,7 @@ Normalized templates use SID text, ISO dates `YYYY-MM-DD`, timestamps `YYYY-MM-D
 
 ## Migration and recovery
 
-The pre-migration SQLite backup is `C:/Users/epeto/.codex/backups/sijatim/20261009-124508/database.sqlite`. Original draft row values are stored in `invoice_lines.legacy_inputs`; existing AGU26/SEP26 drafts were shifted to the preceding usage month, with old SLA and defaulted event dates invalidated. They were not finalized.
+The pre-migration SQLite backup is `storage/app/private/backups/<timestamp>/database.sqlite`. Original draft row values are stored in `invoice_lines.legacy_inputs`; existing AGU26/SEP26 drafts were shifted to the preceding usage month, with old SLA and defaulted event dates invalidated. They were not finalized.
 
 Billing migrations are forward-only because issued snapshots are immutable. To roll back this initial rollout, stop the application and worker, preserve newly generated artifacts and database changes, and restore the backup deliberately. Do not run a destructive rollback against issued invoice history.
 

@@ -95,14 +95,6 @@ class InvoicePeriod extends Model
     }
 
     /**
-     * Relasi: Banyak step statuses
-     */
-    public function stepStatuses(): HasMany
-    {
-        return $this->hasMany(InvoiceStepStatus::class);
-    }
-
-    /**
      * Relasi: Banyak invoice lines (detail SSID)
      */
     public function lines(): HasMany
@@ -249,22 +241,6 @@ class InvoicePeriod extends Model
     public function outputs(): HasMany
     {
         return $this->hasMany(InvoiceOutput::class);
-    }
-
-    /**
-     * Relasi: Banyak hasil benchmarking bandwidth
-     */
-    public function bandwidthBenchmarkResults(): HasMany
-    {
-        return $this->hasMany(BandwidthBenchmarkResult::class);
-    }
-
-    /**
-     * Relasi: Banyak hasil benchmarking harga
-     */
-    public function priceBenchmarkResults(): HasMany
-    {
-        return $this->hasMany(PriceBenchmarkResult::class);
     }
 
     /**
@@ -420,17 +396,6 @@ class InvoicePeriod extends Model
             self::STATUS_ARCHIVED => 'Diarsipkan',
             default => 'Unknown',
         };
-    }
-
-    /**
-     * Get human-readable current step name
-     */
-    public function getCurrentStepNameAttribute(): ?string
-    {
-        if (!$this->current_step_code) {
-            return null;
-        }
-        return InvoiceStep::where('step_code', $this->current_step_code)->value('step_name');
     }
 
     /**
