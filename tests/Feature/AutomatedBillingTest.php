@@ -513,7 +513,7 @@ class AutomatedBillingTest extends TestCase
         $this->assertSame('operator_bulk_zero', $zero->source['origin']);
         $result = app(InvoiceCalculator::class)->calculate($p->fresh());
         $this->assertSame('1.00000000', $result['lines'][0]['sla']);
-        $this->assertSame('0.00', $result['lines'][0]['sla_credit']);
+        $this->assertSame('0', $result['lines'][0]['sla_credit']);
 
         $zero->update(['review_status' => 'pending', 'duration_seconds' => 120, 'reason' => 'Review import diperlukan']);
         $this->post(route('billing.downtime.confirm-zero', $p), ['expected_count' => 0])->assertRedirect();

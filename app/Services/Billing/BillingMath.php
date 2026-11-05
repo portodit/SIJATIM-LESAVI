@@ -64,7 +64,7 @@ final class BillingMath
         $allowed = BigDecimal::of(1)->minus($target)->multipliedBy($seconds);
         $excess = BigDecimal::of($down)->minus($allowed);
 
-        return $excess->isLessThanOrEqualTo(0) ? '0.00' : self::money($excess->multipliedBy($gross)->dividedBy($seconds, 12, RoundingMode::HalfUp));
+        return $excess->isLessThanOrEqualTo(0) ? '0' : self::round((string) $excess->multipliedBy($gross)->dividedBy($seconds, 12, RoundingMode::HalfUp));
     }
 
     public static function sla(int $down, int $seconds): string

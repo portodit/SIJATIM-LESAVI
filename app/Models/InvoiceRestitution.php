@@ -23,7 +23,7 @@ class InvoiceRestitution extends Model
 
     protected $casts = [
         'restitusi_tagihan' => 'decimal:2',
-        'restitusi_over_sla' => 'decimal:2',
+        'restitusi_over_sla' => 'decimal:0',
         'total_after_restitusi' => 'decimal:2',
     ];
 

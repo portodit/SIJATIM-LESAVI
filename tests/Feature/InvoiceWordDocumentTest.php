@@ -662,7 +662,7 @@ class InvoiceWordDocumentTest extends TestCase
         $this->assertNotContains('Total Biaya Upgrade / Downgrade', array_keys($this->summaryOf($layouts['docx'])));
 
         // A few absolute values, so the comparison cannot pass by both sides being empty or equally wrong.
-        $this->assertSame(['1', 'Cabang Test', 'Jl. Contoh No. 1', 'KK', 'TELKOM VPN IP', '0012-001', '512 Kbps', '98.00%', 'Rp23,198.19', '2,319,819', '', '2,319,819', '2,296,620.81'], $layouts['docx']['rows'][0]);
+        $this->assertSame(['1', 'Cabang Test', 'Jl. Contoh No. 1', 'KK', 'TELKOM VPN IP', '0012-001', '512 Kbps', '98.00%', 'Rp23,198', '2,319,819', '', '2,319,819', '2,296,621'], $layouts['docx']['rows'][0]);
         $this->assertSame(['3', 'Cabang Test', 'Jl. Contoh No. 3', 'KK', 'TELKOM VPN IP', '0012-003', '1 Mbps', '100.00%', 'Rp0', '1,000,000', '250,000', '1,250,000', '1,250,000'], $layouts['docx']['rows'][2]);
     }
 
@@ -931,13 +931,13 @@ class InvoiceWordDocumentTest extends TestCase
         $always = ['Total Biaya Layanan Eksisting', 'Total Biaya Pasang Baru Jaringan (PSB)', 'Total Biaya Pemutusan Jaringan'];
         $end = ['Total Seluruh Tagihan', 'PPN', 'Grand Total Invoice'];
 
-        // Relocation, rounding and restitution all present.
-        $snapshot = $this->snapshot([[], ['sla_credit' => '0.00', 'order' => 'RELOKASI', 'charges' => ['existing' => '1000000.00', 'relocation' => '300000.00']]]);
+        // Relocation, rounding and restitution all present. The SLA credit is whole rupiah, so the rounding comes from the cents of a price.
+        $snapshot = $this->snapshot([[], ['sla_credit' => '0.00', 'order' => 'RELOKASI', 'charges' => ['existing' => '1000000.40', 'relocation' => '300000.00']]]);
         $this->assertNotSame('0.00', $snapshot['totals']['rounding']);
         $layouts = $this->assertSameAsPdf($snapshot);
         $summary = $this->summaryOf($layouts['docx']);
         $this->assertSame([...$always, 'Total Biaya Relokasi', 'Total Restitusi', 'Pembulatan', ...$end], array_keys($summary));
-        $this->assertSame(['300,000', '-23,198.19', '0.19'], [$summary['Total Biaya Relokasi'], $summary['Total Restitusi'], $summary['Pembulatan']]);
+        $this->assertSame(['300,000', '-23,198', '-0.40'], [$summary['Total Biaya Relokasi'], $summary['Total Restitusi'], $summary['Pembulatan']]);
         $this->assertSame('3,596,621', $summary['Total Seluruh Tagihan']);
 
         // None of the three: whole amounts and no credits.
