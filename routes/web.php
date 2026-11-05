@@ -76,11 +76,14 @@ Route::middleware([
     Route::post('/invoice-periods/{invoicePeriod}/traffic-exception', [BillingWorkflowController::class, 'trafficException'])->name('billing.traffic-exception');
     Route::post('/invoice-periods/{invoicePeriod}/adjustments', [BillingWorkflowController::class, 'adjustment'])->name('billing.adjustments');
     Route::post('/invoice-periods/{invoicePeriod}/adjustments/{adjustment}/remove', [BillingWorkflowController::class, 'removeAdjustment'])->name('billing.adjustments.remove');
+    Route::post('/invoice-periods/{invoicePeriod}/special-columns', [BillingWorkflowController::class, 'specialColumn'])->name('billing.special-columns');
+    Route::post('/invoice-periods/{invoicePeriod}/special-columns/remove', [BillingWorkflowController::class, 'removeSpecialColumn'])->name('billing.special-columns.remove');
 
     // Step 3: publish
     Route::post('/invoice-periods/{invoicePeriod}/finalize', [BillingWorkflowController::class, 'finalize'])->name('billing.finalize');
     Route::post('/invoice-periods/{invoicePeriod}/revisions', [BillingWorkflowController::class, 'revise'])->name('billing.revise');
     Route::post('/invoice-revisions/{revision}/retry-generation', [BillingWorkflowController::class, 'retry'])->name('billing.retry');
     Route::post('/invoice-revisions/{revision}/summary-image', [BillingWorkflowController::class, 'summaryImage'])->name('billing.summary-image');
+    Route::post('/invoice-revisions/{revision}/word-document', [BillingWorkflowController::class, 'wordDocument'])->name('billing.word-document');
     Route::get('/invoice-outputs/{output}/download', [BillingWorkflowController::class, 'download'])->name('billing.download');
 });

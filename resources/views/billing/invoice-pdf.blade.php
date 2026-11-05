@@ -46,8 +46,20 @@ table.summary { width: 100%; border-collapse: collapse; margin-top: 14px; page-b
     $components = $totals['components'];
     // A service is either upgraded or downgraded within a month, so both share one column.
     $changeTotal = $sum([$components['upgrade'], $components['downgrade']]);
-    // The upgrade/downgrade columns only appear in a month that has such a case; their width goes to ALAMAT otherwise.
-    $hasChange = collect($snapshot['lines'])->pluck('events')->flatten(1)->whereIn('event_type', ['upgrade', 'downgrade'])->isNotEmpty();
+    // A column is only generated when some row has data in it; ALAMAT takes the width the left-out columns free.
+    $show = \App\Services\Billing\InvoicePrintColumns::visible($snapshot);
+    $special = \App\Services\Billing\InvoicePrintColumns::special($snapshot);
+    $widths = ['no' => 2.2, 'branch' => 6.4, 'category' => 6.4, 'service' => 6.6, 'sid' => 8.4, 'bandwidth' => 4.2, 'bandwidth_change' => 4.2, 'sla' => 4, 'credit' => 4.8,
+        'existing' => 4.6, 'change' => 5.2, 'termination' => 4.4, 'installation' => 4, 'relocation' => 4, 'gross' => 5.2, 'net' => 5.6];
+    foreach ($special as $i => $column) {
+        $widths['special_'.$i] = 8;
+        $show['special_'.$i] = true;
+    }
+    $widths = \App\Services\Billing\InvoicePrintColumns::fit(array_intersect_key($widths, array_filter($show)), 100, 11, 1);
+    $bandwidthCols = (int) $show['bandwidth'] + (int) $show['bandwidth_change'];
+    $priceCols = (int) $show['existing'] + count($special) + (int) $show['change'] + (int) $show['termination'] + (int) $show['installation'] + (int) $show['relocation'];
+    // The second header row exists only for the sub-columns of the group headers and the restitution column.
+    $rowspan = $bandwidthCols || $show['credit'] || $priceCols ? ' rowspan="2"' : '';
     $restitution = $sum([$totals['sla_credit'], $totals['manual_credit']]);
 @endphp
 <img class="logo" src="{{ $logo }}" alt="Telkom Indonesia">
@@ -74,58 +86,112 @@ table.summary { width: 100%; border-collapse: collapse; margin-top: 14px; page-b
 <table class="lines">
 <thead>
 <tr>
-<th rowspan="2" style="width:2.2%">NO.</th>
-<th rowspan="2" style="width:6.4%">JENIS KANTOR</th>
-<th rowspan="2" style="width:{{ $hasChange ? 21 : 30.4 }}%">ALAMAT</th>
-<th rowspan="2" style="width:6.4%">KATEGORI LOKASI</th>
-<th rowspan="2" style="width:6.6%">LAYANAN</th>
-<th rowspan="2" style="width:8.4%">ID</th>
-{{-- No width on this header: a percentage width here made Dompdf hang on the full invoice. --}}
-<th colspan="{{ $hasChange ? 2 : 1 }}">BANDWIDTH</th>
-<th rowspan="2" style="width:4%">Availability</th>
-<th style="width:3.6%">Nilai Restitusi</th>
-<th colspan="{{ $hasChange ? 5 : 4 }}">HARGA (Rp)</th>
-<th rowspan="2" style="width:5.2%">TOTAL</th>
-<th rowspan="2" style="width:5.6%">HARGA SETELAH RESTITUSI</th>
+<th{!! $rowspan !!} style="width:{{ $widths['no'] }}%">NO.</th>
+@if($show['branch'])
+<th{!! $rowspan !!} style="width:{{ $widths['branch'] }}%">JENIS KANTOR</th>
+@endif
+<th{!! $rowspan !!} style="width:{{ $widths['address'] }}%">ALAMAT</th>
+@if($show['category'])
+<th{!! $rowspan !!} style="width:{{ $widths['category'] }}%">KATEGORI LOKASI</th>
+@endif
+@if($show['service'])
+<th{!! $rowspan !!} style="width:{{ $widths['service'] }}%">LAYANAN</th>
+@endif
+<th{!! $rowspan !!} style="width:{{ $widths['sid'] }}%">ID</th>
+{{-- No width on the colspan headers: a percentage width here made Dompdf hang on the full invoice. --}}
+@if($bandwidthCols)
+<th colspan="{{ $bandwidthCols }}">BANDWIDTH</th>
+@endif
+@if($show['sla'])
+<th{!! $rowspan !!} style="width:{{ $widths['sla'] }}%">Availability</th>
+@endif
+@if($show['credit'])
+<th style="width:{{ $widths['credit'] }}%">Nilai Restitusi</th>
+@endif
+@if($priceCols)
+<th colspan="{{ $priceCols }}">HARGA (Rp)</th>
+@endif
+<th{!! $rowspan !!} style="width:{{ $widths['gross'] }}%">TOTAL</th>
+<th{!! $rowspan !!} style="width:{{ $widths['net'] }}%">HARGA SETELAH RESTITUSI</th>
 </tr>
+@if($rowspan !== '')
 <tr>
-<th class="hl" style="width:4.2%">Eksisting</th>
-@if($hasChange)
-<th class="hl" style="width:4.2%">Upgrade / Downgrade</th>
+@if($show['bandwidth'])
+<th class="hl" style="width:{{ $widths['bandwidth'] }}%">Eksisting</th>
 @endif
+@if($show['bandwidth_change'])
+<th class="hl" style="width:{{ $widths['bandwidth_change'] }}%">Upgrade / Downgrade</th>
+@endif
+@if($show['credit'])
 <th class="hl">Restitusi Over SLA</th>
-<th style="width:4.6%">Eksisting</th>
-@if($hasChange)
-<th class="hl" style="width:5.2%">Upgrade / Downgrade</th>
 @endif
-<th class="hl" style="width:4.4%">Cabut (Prorata)</th>
-<th class="hl" style="width:4%">PSB</th>
-<th class="hl" style="width:4%">Relokasi</th>
+@if($show['existing'])
+<th style="width:{{ $widths['existing'] }}%">Eksisting</th>
+@endif
+@foreach($special as $i => $column)
+<th class="hl" style="width:{{ $widths['special_'.$i] }}%">{{ $column['name'] }}</th>
+@endforeach
+@if($show['change'])
+<th class="hl" style="width:{{ $widths['change'] }}%">Upgrade / Downgrade</th>
+@endif
+@if($show['termination'])
+<th class="hl" style="width:{{ $widths['termination'] }}%">Cabut (Prorata)</th>
+@endif
+@if($show['installation'])
+<th class="hl" style="width:{{ $widths['installation'] }}%">PSB</th>
+@endif
+@if($show['relocation'])
+<th class="hl" style="width:{{ $widths['relocation'] }}%">Relokasi</th>
+@endif
 </tr>
+@endif
 </thead>
 <tbody>
 @foreach($snapshot['lines'] as $line)
 @php($c = $line['charges'])
 <tr>
 <td>{{ $line['number'] }}</td>
+@if($show['branch'])
 <td>{{ $line['branch'] }}</td>
+@endif
 <td class="left">{{ $line['address'] }}</td>
+@if($show['category'])
 <td>{{ $line['category'] }}</td>
+@endif
+@if($show['service'])
 <td>{{ $line['service'] }}</td>
+@endif
 <td>{{ $line['sid'] }}</td>
+@if($show['bandwidth'])
 <td>{{ $line['bandwidth'] }}</td>
-@if($hasChange)
+@endif
+@if($show['bandwidth_change'])
 <td>{{ $line['bandwidth_change'] ?? '' }}</td>
 @endif
+@if($show['sla'])
 <td>{{ $line['sla'] === null ? '—' : number_format((float) $line['sla'] * 100, 2, '.', ',').'%' }}</td>
+@endif
+@if($show['credit'])
 <td>Rp{{ $money($sum([$line['sla_credit'], $line['manual_credit']])) }}</td>
+@endif
+@if($show['existing'])
 <td class="num">{{ $money($c['existing']) }}</td>
-@if($hasChange)
+@endif
+@foreach($special as $column)
+<td class="num">{{ $blank($line['special'][$column['name']] ?? null) }}</td>
+@endforeach
+@if($show['change'])
 <td class="num">{{ $blank($sum([$c['upgrade'], $c['downgrade']])) }}</td>
 @endif
+@if($show['termination'])
 <td class="num">{{ $blank($c['termination']) }}</td>
+@endif
+@if($show['installation'])
 <td class="num">{{ $blank($c['installation']) }}</td>
+@endif
+@if($show['relocation'])
 <td class="num">{{ $blank($c['relocation']) }}</td>
+@endif
 <td class="num">{{ $money($line['gross']) }}</td>
 <td class="num">{{ $money($line['net']) }}</td>
 </tr>
@@ -135,7 +201,7 @@ table.summary { width: 100%; border-collapse: collapse; margin-top: 14px; page-b
 
 <table class="summary">
 <tr><td>Total Biaya Layanan Eksisting</td><td class="num">{{ $money($components['existing']) }}</td></tr>
-@if($hasChange)
+@if($show['change'])
 <tr><td>Total Biaya Upgrade / Downgrade</td><td class="num">{{ $money($changeTotal) }}</td></tr>
 @endif
 <tr><td>Total Biaya Pasang Baru Jaringan (PSB)</td><td class="num">{{ $money($components['installation']) }}</td></tr>
@@ -143,6 +209,9 @@ table.summary { width: 100%; border-collapse: collapse; margin-top: 14px; page-b
 @if($components['relocation'] !== null && (float) $components['relocation'] != 0)
 <tr><td>Total Biaya Relokasi</td><td class="num">{{ $money($components['relocation']) }}</td></tr>
 @endif
+@foreach($special as $column)
+<tr><td>Total {{ $column['summary'] }}</td><td class="num">{{ $money($column['amount']) }}</td></tr>
+@endforeach
 @if($restitution === null || $restitution != 0)
 <tr><td>Total Restitusi</td><td class="num">{{ $restitution === null ? '—' : '-'.$money($restitution) }}</td></tr>
 @endif

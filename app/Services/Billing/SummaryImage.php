@@ -7,7 +7,7 @@ use Brick\Math\BigDecimal;
 /**
  * "INVOICE PERIODE ... / TELKOM - MONTHLY DATA SUMMARY" as a PNG, drawn from a frozen invoice
  * snapshot. Rows follow the SUMMARY sheet of the Telkom workbook (A–F by order type, G–J SLA,
- * then total after restitution, PPN and grand total).
+ * one row from K on per special column of the invoice, then total after restitution, PPN and grand total).
  */
 final class SummaryImage
 {
@@ -83,7 +83,9 @@ final class SummaryImage
             $rows[] = ['type' => 'band', 'label' => $band];
             $rows[] = ['type' => 'item', 'label' => $label, 'count' => (string) $count, 'value' => self::rupiah($components[$componentKey] ?? '0'), 'points' => $count, 'amount' => self::wholeRupiah($components[$componentKey] ?? '0')];
         }
-        $rows[] = ['type' => 'total', 'key' => 'gross', 'label' => 'Total Nilai Tagihan', 'count' => (string) $pointTotal, 'value' => self::rupiah($t['gross']), 'points' => $pointTotal, 'amount' => self::wholeRupiah($t['gross'])];
+        // A-F add up to this total; each special column has its own row from K on, as on the Telkom sheet.
+        $billed = $t['gross'] === null ? null : BillingMath::money(BigDecimal::of($t['gross'])->minus($t['special_total'] ?? '0.00'));
+        $rows[] = ['type' => 'total', 'key' => 'gross', 'label' => 'Total Nilai Tagihan', 'count' => (string) $pointTotal, 'value' => self::rupiah($billed), 'points' => $pointTotal, 'amount' => self::wholeRupiah($billed)];
 
         // SLA: a service meets it when its actual SLA is known and not below the target.
         $known = count(array_filter($snapshot['lines'] ?? [], fn ($line) => ($line['sla'] ?? null) !== null));
@@ -93,6 +95,9 @@ final class SummaryImage
         $rows[] = ['type' => 'sla', 'label' => 'H. Total Titik Lokasi SLA Yang Tidak Terpenuhi', 'value' => (string) $below, 'points' => $below];
         $rows[] = ['type' => 'sla', 'key' => 'sla_credit', 'label' => 'I.  Total Nilai Restitusi SLA Yang Tidak Terpenuhi', 'value' => self::rupiah($t['sla_credit'], true), 'amount' => self::wholeRupiah($t['sla_credit'], true)];
         $rows[] = ['type' => 'sla', 'key' => 'manual_credit', 'label' => 'J. Total Nilai Restitusi Tagihan', 'value' => self::rupiah($t['manual_credit'], true), 'amount' => self::wholeRupiah($t['manual_credit'], true)];
+        foreach (array_values($t['special_columns'] ?? []) as $i => $column) {
+            $rows[] = ['type' => 'sla', 'key' => 'special_'.$i, 'label' => chr(ord('K') + $i).'. Total Nilai '.$column['summary'], 'value' => self::rupiah($column['amount']), 'amount' => self::wholeRupiah($column['amount'])];
+        }
         $rows[] = ['type' => 'final', 'key' => 'subtotal', 'label' => 'Total Nilai Tagihan Setelah Restitusi', 'value' => self::rupiah($t['subtotal']), 'amount' => self::wholeRupiah($t['subtotal']), 'bold' => '1'];
         $rows[] = ['type' => 'final', 'key' => 'tax', 'label' => 'PPN', 'value' => self::rupiah($t['tax']), 'amount' => self::wholeRupiah($t['tax'])];
         $rows[] = ['type' => 'final', 'key' => 'grand_total', 'label' => 'Grand Total Nilai Tagihan', 'value' => self::rupiah($t['grand_total']), 'amount' => self::wholeRupiah($t['grand_total']), 'bold' => '1'];
@@ -169,7 +174,12 @@ final class SummaryImage
                 break;
             case 'sla':
                 imagefilledrectangle($im, self::LEFT, $y, self::RIGHT, $bottom - 1, $red);
-                $this->text($im, $bold, 22, self::LEFT + 8, $mid, $row['label'], $white, 'left');
+                // The name of a special column comes from the operator: a long one gets a smaller font instead of running into the amount.
+                $size = 22;
+                while ($size > 12 && imagettfbbox($size, 0, $bold, $row['label'])[2] > self::COL3 - self::LEFT - 8) {
+                    $size--;
+                }
+                $this->text($im, $bold, $size, self::LEFT + 8, $mid, $row['label'], $white, 'left');
                 $this->text($im, $bold, 22, (self::COL3 + self::RIGHT) / 2, $mid, $row['value'], $white, 'center');
                 break;
             case 'final':

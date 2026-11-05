@@ -22,6 +22,14 @@ final class InvoiceCalculator
 {
     public const COMPONENTS = ['existing', 'upgrade', 'downgrade', 'termination', 'installation', 'relocation'];
 
+    /**
+     * Adjustment kind: a column of its own on one invoice, an extra amount per SID (attributes: column = its name, summary = its
+     * name on the summary rows). OKT26 uses one to correct the Mikrotik upgrade of the September invoice. It counts in the line
+     * total and the invoice total, so PPN applies, but is not part of the month's service price, so SLA credit and the comparison
+     * with Telkom's price keep using that price.
+     */
+    public const SPECIAL_COLUMN = 'special_column';
+
     /** Names looked up for issue details, loaded once per calculation. */
     private array $names = [];
 
@@ -45,7 +53,10 @@ final class InvoiceCalculator
             $bandwidths = BandwidthOption::all()->keyBy('id');
             $events = $period->serviceEvents()->orderBy('effective_date')->orderBy('id')->get()->groupBy('sid');
             $outages = $period->outages()->get()->groupBy('sid');
-            $adjustments = $period->adjustments()->get()->groupBy('sid');
+            $adjustments = $period->adjustments()->orderBy('id')->get()->groupBy('sid');
+            // Name => name on the summary rows, in the order the columns were first entered.
+            $specialSummaries = $period->adjustments()->where('kind', self::SPECIAL_COLUMN)->orderBy('id')->get()
+                ->mapWithKeys(fn ($a) => [$a->getAttribute('attributes')['column'] => $a->getAttribute('attributes')['summary']])->all();
             $lines = [];
             $models = $period->lines()->with(['bankJatimLink.officeType', 'bankJatimLink.locationCategory', 'bankJatimLink.service', 'existingBandwidth', 'typeOrder', 'trafficUsage'])->orderBy('line_number')->get();
             if ($models->isEmpty()) {
@@ -72,7 +83,7 @@ final class InvoiceCalculator
                 }
             }
             array_push($issues, ...$period->pendingSourceIssues());
-            $totals = $this->totals($lines, $settings);
+            $totals = $this->totals($lines, $settings, $specialSummaries);
             $sourceRows = ImportRow::whereIn('import_batch_id', $period->importBatches()->whereNotNull('committed_at')->pluck('id'))->where('status', 'valid')->whereIn('kind', ['notes', 'reference'])->get();
             foreach ($sourceRows->where('kind', 'reference') as $claim) {
                 $key = $claim->normalized['total_key'] ?? null;
@@ -292,7 +303,14 @@ final class InvoiceCalculator
         $sla = $down['seconds'] === null || $seconds === 0 ? null : BillingMath::sla($down['seconds'], $seconds);
         $slaCredit = $sla !== null && $gross !== null ? BillingMath::slaCredit($gross, $down['seconds'], $seconds, (string) $settings['sla_target']) : null;
         $manual = BillingMath::sum(array_column(array_filter($adjustments, fn ($a) => $a['kind'] === 'manual_credit'), 'amount'));
-        $net = $gross !== null && $slaCredit !== null ? BillingMath::money(BigDecimal::of($gross)->minus($slaCredit)->minus($manual)) : null;
+        $special = [];
+        foreach ($adjustments as $a) {
+            if ($a['kind'] === self::SPECIAL_COLUMN) {
+                $special[$a['attributes']['column']] = BillingMath::sum([$special[$a['attributes']['column']] ?? 0, $a['amount']]);
+            }
+        }
+        $specialTotal = BillingMath::sum($special);
+        $net = $gross !== null && $slaCredit !== null ? BillingMath::money(BigDecimal::of($gross)->minus($slaCredit)->minus($manual)->plus($specialTotal)) : null;
         if ($net !== null && BigDecimal::of($net)->isLessThan(0)) {
             $issues[] = $this->issue('excess_credit', $sid, 'Kredit melebihi tagihan. Periksa penyesuaian.', $model->id);
         }
@@ -328,7 +346,7 @@ final class InvoiceCalculator
             // Bandwidth after the month's upgrade/downgrade; null when the service kept its bandwidth.
             'bandwidth_change' => $changedBw ? ($bandwidths->get($changedBw)?->bandwidth_name ?? '-') : null,
             'order' => count($types) > 1 || count($events) > 1 ? 'MULTIPLE' : strtoupper($types[0] ?? 'existing'),
-            'events' => $events, 'rates' => $rates, 'charges' => $priceKnown ? $charges : array_fill_keys(self::COMPONENTS, null), 'gross' => $gross,
+            'events' => $events, 'rates' => $rates, 'charges' => $priceKnown ? $charges : array_fill_keys(self::COMPONENTS, null), 'special' => $special, 'special_total' => $specialTotal, 'gross' => $gross === null ? null : BillingMath::sum([$gross, $specialTotal]),
             'downtime_seconds' => $down['seconds'], 'billing_seconds' => $seconds, 'sla' => $sla, 'sla_target' => (string) $settings['sla_target'],
             'sla_credit' => $slaCredit, 'manual_credit' => $manual, 'net' => $net,
             'traffic' => ['inbound_kbps' => $traffic?->inbound_kbps, 'outbound_kbps' => $traffic?->outbound_kbps, 'average_kbps' => $average, 'volume_gb' => $volume, 'coverage_start' => $traffic?->coverage_start?->toDateString(), 'coverage_end' => $traffic?->coverage_end?->toDateString(), 'covered_seconds' => $fullTrafficCoverage ? $seconds : null, 'units' => 'Kbps', 'volume_units' => 'decimal GB', 'source' => $traffic?->source, 'exception_reason' => $model->traffic_exception_reason],
@@ -469,7 +487,7 @@ final class InvoiceCalculator
         return $id ? ($this->names['batch'][$id] ??= ImportBatch::whereKey($id)->value('original_filename')) : null;
     }
 
-    private function totals(array $lines, array $settings): array
+    private function totals(array $lines, array $settings, array $specialSummaries = []): array
     {
         $components = [];
         foreach (self::COMPONENTS as $k) {
@@ -501,7 +519,16 @@ final class InvoiceCalculator
             $branchTotals[$branch] = ['count' => count($rows), 'gross' => count(array_filter($rows, fn ($l) => $l['gross'] === null)) ? null : BillingMath::sum(array_column($rows, 'gross')), 'net' => count(array_filter($rows, fn ($l) => $l['net'] === null)) ? null : BillingMath::sum(array_column($rows, 'net'))];
         }
 
-        return ['service_count' => count($lines), 'components' => $components, 'gross' => $grossKnown ? BillingMath::sum($components) : null,
+        $specialTotal = BillingMath::sum(array_column($lines, 'special_total'));
+        $specialColumns = [];
+        foreach ($specialSummaries as $name => $summary) {
+            $amount = BillingMath::sum(array_map(fn ($l) => $l['special'][$name] ?? 0, $lines));
+            if (! BigDecimal::of($amount)->isZero()) {
+                $specialColumns[] = ['name' => $name, 'summary' => $summary, 'amount' => $amount];
+            }
+        }
+
+        return ['service_count' => count($lines), 'components' => $components, 'special_columns' => $specialColumns, 'special_total' => $specialTotal, 'gross' => $grossKnown ? BillingMath::sum([...array_values($components), $specialTotal]) : null,
             'sla_credit' => $known ? BillingMath::sum(array_column($lines, 'sla_credit')) : null, 'manual_credit' => BillingMath::sum(array_column($lines, 'manual_credit')),
             'net_exact' => $exact, 'rounding' => $exact !== null ? BillingMath::money(BigDecimal::of($subtotal)->minus($exact)) : null,
             'subtotal' => $subtotal, 'tax' => $tax, 'grand_total' => $subtotal !== null ? BillingMath::sum([$subtotal, $tax]) : null,

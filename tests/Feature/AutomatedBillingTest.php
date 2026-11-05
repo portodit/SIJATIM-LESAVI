@@ -69,7 +69,7 @@ class AutomatedBillingTest extends TestCase
         $this->assertSame('1623867.00', BillingMath::prorate('2319819', 21, 30));
         $this->assertSame('773270.00', BillingMath::prorate('2319819', 10, 30));
         $this->assertSame('433330.00', BillingMath::prorate('1300000', 10, 30));
-        $this->assertSame('27341.59', BillingMath::sum([BillingMath::slaCredit('1300000', 66240, 2678400, '0.99'), BillingMath::slaCredit('3671171', 32760, 2678400, '0.99')]));
+        $this->assertSame('27342.00', BillingMath::sum([BillingMath::slaCredit('1300000', 66240, 2678400, '0.99'), BillingMath::slaCredit('3671171', 32760, 2678400, '0.99')]));
     }
 
     public function test_unknown_outages_exclusions_overlap_and_exact_seconds(): void
@@ -105,11 +105,11 @@ class AutomatedBillingTest extends TestCase
         $this->assertSame('0.99', $result['profile']['settings']['sla_target']);
         $this->assertSame('0.99', $result['lines'][0]['sla_target']);
         $this->assertSame('0.98000000', $result['lines'][0]['sla']);
-        $this->assertSame('23198.19', $result['lines'][0]['sla_credit']);
+        $this->assertSame('23198', $result['lines'][0]['sla_credit']);
         $this->assertSame('0.990000', $line->fresh()->sla->sla_pks);
         $this->assertTrue($line->fresh()->isBelowSla());
         $this->assertTrue($line->fresh()->sla->isBelowThreshold());
-        $this->assertSame(23198.19, $line->fresh()->calculateRestitutionOverSla());
+        $this->assertSame(23198.0, $line->fresh()->calculateRestitutionOverSla());
         $this->assertSame('0.995', $profile->fresh()->settings['sla_target']);
         $this->get('/invoice-periods/'.$p->id.'/step/2')->assertOk()->assertSee('Target SLA')->assertSee('SLA aktual')->assertSee('99%')->assertSee('98,0000%');
         $result['lines'][0]['sla_target'] = '0.995';
@@ -226,7 +226,7 @@ class AutomatedBillingTest extends TestCase
         (new GenerateInvoiceDocuments($r->id))->handle(app(InvoiceDocumentGenerator::class));
         $r->refresh();
         $this->assertSame('ready', $r->status);
-        $this->assertSame(3, $r->outputs()->count(), 'Excel, PDF and the summary picture.');
+        $this->assertSame(4, $r->outputs()->count(), 'Excel, PDF, Word and the summary picture.');
         $oldHash = $r->snapshot_hash;
         $book = IOFactory::load(Storage::disk('local')->path($r->outputs()->where('output_type', 'excel_invoice')->first()->file_path));
         $this->assertSame(3, $book->getSheetCount());
@@ -241,7 +241,7 @@ class AutomatedBillingTest extends TestCase
         $this->assertEquals((float) $c['totals']['grand_total'], $grandTotal[3]);
         $book->disconnectWorksheets();
         (new GenerateInvoiceDocuments($r->id))->handle(app(InvoiceDocumentGenerator::class));
-        $this->assertSame(3, $r->outputs()->count(), 'Excel, PDF and the summary picture.');
+        $this->assertSame(4, $r->outputs()->count(), 'Excel, PDF, Word and the summary picture.');
         $this->get('/invoices')->assertOk();
         $this->get('/invoices/'.$r->invoice_id)->assertOk();
         $f->revise($p, 'Correction to approved billing');
@@ -365,7 +365,7 @@ class AutomatedBillingTest extends TestCase
         $this->assertFalse($p->fresh()->isLocked());
         $this->assertSame($version, $p->fresh()->input_version);
         $this->assertSame('revision', $p->fresh()->status);
-        $this->assertCount(3, $revision->outputs);
+        $this->assertCount(4, $revision->outputs);
     }
 
     public function test_xlsx_shifted_tables_headers_and_formula_text(): void

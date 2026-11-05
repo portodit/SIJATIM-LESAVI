@@ -5,6 +5,7 @@ namespace Tests\Feature;
 use App\Jobs\GenerateInvoiceDocuments;
 use App\Models\BandwidthOption;
 use App\Models\BankJatimLink;
+use App\Models\InvoiceAdjustment;
 use App\Models\InvoiceLine;
 use App\Models\InvoicePeriod;
 use App\Models\InvoiceRevision;
@@ -39,6 +40,14 @@ class ExcelOutputTest extends TestCase
 {
     use RefreshDatabase;
 
+    private const SPECIAL = 'Biaya contoh usage agst Inv Sept';
+
+    /** The colours the Harga rows cycle through, by location category id. */
+    private const CATEGORY_COLORS = [
+        'FFF2CC', 'D9EAD3', 'CFE2F3', 'F4CCCC', 'D9D2E9', 'FCE5CD', 'D0E0E3', 'EAD1DC', 'C9DAF8', 'B6D7A8', 'FFE599', 'F9CB9C',
+        'A2C4C9', 'B4A7D6', 'D5A6BD', 'EA9999', '9FC5E8', 'A4C2F4', '93C47D', 'FFD966', 'F6B26B', '76A5AF', 'C27BA0', 'E6B8AF',
+    ];
+
     private array $temporaryFiles = [];
 
     protected function tearDown(): void
@@ -52,9 +61,10 @@ class ExcelOutputTest extends TestCase
     /**
      * Issued invoice of September 2026 (usage August) with two SSIDs: "0012-ABC" (existing) and "00123456"
      * (upgraded on 22 August, 53,568 s downtime). Master Harga holds valid tariffs, a SID-specific one, and three
-     * that must not be listed: expired before the usage month, starting after it, and inactive.
+     * that must not be listed: expired before the usage month, starting after it, and inactive. With $withAdjustment the first
+     * SID also sits in a special column of Rp70.000.
      */
-    private function issuedRevision(): InvoiceRevision
+    private function issuedRevision(bool $withAdjustment = false): InvoiceRevision
     {
         Queue::fake();
         Storage::fake('local');
@@ -81,6 +91,9 @@ class ExcelOutputTest extends TestCase
         $tariff(['bandwidth_option_id' => $bw512->id, 'monthly_price' => '999003', 'router_mode' => 'managed', 'is_active' => false]);
         ServiceEvent::create(['invoice_period_id' => $period->id, 'sid' => '00123456', 'event_type' => 'upgrade', 'effective_date' => '2026-08-22', 'attributes' => ['bandwidth_option_id' => $bw1024->id]]);
         $period->outages()->create(['sid' => '00123456', 'kind' => 'aggregate', 'duration_seconds' => 53568, 'review_status' => 'eligible', 'reason' => 'Test', 'coverage_start' => '2026-08-01 00:00:00', 'coverage_end' => '2026-09-01 00:00:00']);
+        if ($withAdjustment) {
+            InvoiceAdjustment::create(['invoice_period_id' => $period->id, 'sid' => '0012-ABC', 'kind' => InvoiceCalculator::SPECIAL_COLUMN, 'amount' => '70000', 'attributes' => ['column' => self::SPECIAL, 'summary' => 'Biaya contoh'], 'reason' => 'Contoh', 'reference' => 'Daftar SID uji']);
+        }
         $period->update(['sla_coverage' => ['sids' => ['0012-ABC', '00123456']]]);
         $period->markInputsChanged('test');
         app(InvoiceCalculator::class)->calculate($period->fresh());
@@ -106,6 +119,21 @@ class ExcelOutputTest extends TestCase
         app(InvoiceDocumentGenerator::class)->excel($snapshot, $path, 1);
 
         return IOFactory::load($path);
+    }
+
+    /** Runs the generator's own check of the saved files against a snapshot: null when it accepts them, else the reason. */
+    private function validationError(InvoiceRevision $revision, array $snapshot): ?string
+    {
+        $disk = Storage::disk('local');
+        $xlsx = $disk->path($revision->outputs()->where('output_type', 'excel_invoice')->sole()->file_path);
+        $pdf = $disk->path($revision->outputs()->where('output_type', 'pdf_cetak')->sole()->file_path);
+        try {
+            (new \ReflectionMethod(InvoiceDocumentGenerator::class, 'validateFiles'))->invoke(app(InvoiceDocumentGenerator::class), $xlsx, $pdf, $snapshot);
+        } catch (\RuntimeException $e) {
+            return $e->getMessage();
+        }
+
+        return null;
     }
 
     /** Raw cell values by 1-based row number. */
@@ -138,7 +166,7 @@ class ExcelOutputTest extends TestCase
         $this->assertSame(3, $book->getSheetCount());
         $this->assertSame(['Harga', 'Detail Layanan', 'Summary Invoice'], $book->getSheetNames());
         $this->assertSame('Summary Invoice', $book->getActiveSheet()->getTitle());
-        $this->assertSame(3, $revision->outputs()->count(), 'Excel, PDF and the summary picture are still issued.');
+        $this->assertSame(4, $revision->outputs()->count(), 'Excel, PDF, Word and the summary picture are still issued.');
         $book->disconnectWorksheets();
     }
 
@@ -173,41 +201,215 @@ class ExcelOutputTest extends TestCase
         $rows = $this->rows($detail);
 
         $this->assertSame("\u{2022} TELKOM - MONTHLY RECURRING CHARGES", $detail->getCell('B2')->getValue());
-        $this->assertTrue($detail->getStyle('B2')->getFont()->getBold());
+        $this->assertSame(['Calibri', 12.0, true], [$detail->getStyle('B2')->getFont()->getName(), (float) $detail->getStyle('B2')->getFont()->getSize(), $detail->getStyle('B2')->getFont()->getBold()]);
         $this->assertSame('Arial', $detail->getStyle('A6')->getFont()->getName());
 
-        // Row 3: group header; row 4: sub-header; row 5: the column letters.
-        $row3 = ['NO.', 'JENIS KANTOR', 'ALAMAT', 'KATEGORI LOKASI', 'LAYANAN', 'TYPE ORDER', 'ID', 'PERIOD', 'Bandwidth', null, null, 'IP Host Telkom', 'TANGGAL AKTIVASI', 'TANGGAL MULAI AKTIF LAYANAN (UPGRADE/DOWNGRADE)', 'PEMAKAIAN AVERAGE (Kbps)', null, 'TRAFFIK TOTAL (GB)', null, 'DURASI DOWNTIME (Detik)', 'SLA', null, 'AVAILABILITY (Detik/bulan)', 'RESTITUSI (Rp)', null, 'HARGA (Rp)', null, null, null, null, null, 'TOTAL', 'HARGA SETELAH RESTITUSI', 'SUB TOTAL PER CABANG'];
-        $row4 = [null, null, null, null, null, null, 'SID SEPTEMBER 2026', null, 'Eksisting BW', 'Upgrade BW', 'Downgrade BW', null, null, null, 'Eksisting', 'Upgrade', 'Eksisting', 'Upgrade', null, 'SLA ACTUAL', 'SLA PKS', null, 'Restitusi Over SLA', 'Restitusi Tagihan', 'Eksisting', 'Upgrade (Prorate)', 'Downgrade (Prorate)', 'Cabut (Prorate)', 'PSB', 'Relokasi', null, null, null];
-        $letters = array_map(Coordinate::stringFromColumnIndex(...), range(1, 33));
-        $this->assertSame($row3, array_slice($rows[3], 0, 33));
-        $this->assertSame($row4, array_slice($rows[4], 0, 33));
-        $this->assertSame($letters, array_slice($rows[5], 0, 33));
-        $this->assertSame('AG', $letters[32]);
+        // Row 3: group header; row 4: sub-header; row 5: the column letters (none over TOTAL and HARGA SETELAH RESTITUSI).
+        $row3 = ['NO.', 'JENIS KANTOR', 'ALAMAT', 'KATEGORI LOKASI', 'LAYANAN', 'TYPE ORDER', 'ID', 'PERIOD', 'Bandwidth', null, null, 'IP Host Telkom', 'TANGGAL AKTIVASI', 'TANGGAL MULAI AKTIF LAYANAN  (UPGRADE/DOWNGRADE/ MANAGE SERVICE)', "PEMAKAIAN AVERAGE\n (Kbps)", null, 'TRAFFIK TOTAL (GB)', null, 'DURASI DOWNTIME', 'SLA', null, 'AVAILABILITY (Detik/bulan)', 'RESTITUSI (Rp)', null, 'HARGA (Rp)', null, null, null, null, null, 'TOTAL', 'HARGA SETELAH RESTITUSI', 'SUB TOTAL PER CABANG', 'MIKROTIK/NONMIKROTIK', 'MIKROTIK/NONMIKROTIK'];
+        $row4 = [null, null, null, null, null, null, 'SID SEPTEMBER 2026', null, 'Eksisting BW', 'Upgrade BW', 'Downgrade BW', null, null, null, 'Eksisting', 'Upgrade', 'Eksisting', 'Upgrade', '(Detik)', 'SLA ACTUAL', 'SLA PKS', null, 'Restitusi Over SLA', 'Restitusi Tagihan', 'Eksisting', 'Upgrade (Prorate)', 'Downgrade (Prorate)', 'Cabut (Prorate)', 'PSB', 'Relokasi', 'TOTAL', 'HARGA SETELAH RESTITUSI', 'SUB TOTAL PER CABANG', 'MIKROTIK/NONMIKROTIK', 'KETERANGAN'];
+        $letters = array_map(Coordinate::stringFromColumnIndex(...), range(1, 35));
+        $row5 = array_replace($letters, [30 => null, 31 => null]);
+        $this->assertSame($row3, array_slice($rows[3], 0, 35));
+        $this->assertSame($row4, array_slice($rows[4], 0, 35));
+        $this->assertSame($row5, array_slice($rows[5], 0, 35));
+        $this->assertSame(['AE', 'AF', 'AI'], [$letters[30], $letters[31], $letters[34]]);
+        $this->assertSame('AI', $detail->getHighestColumn(), 'Without a special column the sheet ends at KETERANGAN in AI.');
+        $this->assertNotContains(self::SPECIAL, $rows[4]);
 
-        $merged = array_values($detail->getMergeCells());
-        foreach (['A3:A4', 'B3:B4', 'F3:F4', 'H3:H4', 'I3:K3', 'L3:L4', 'N3:N4', 'O3:P3', 'Q3:R3', 'S3:S4', 'T3:U3', 'V3:V4', 'W3:X3', 'Y3:AD3', 'AE3:AE4', 'AF3:AF4', 'AG3:AG4'] as $range) {
-            $this->assertContains($range, $merged, $range);
-        }
-        $this->assertNotContains('G3:G4', $merged, 'ID and the SID heading are two rows.');
-
-        $fill = fn (string $cell) => $detail->getStyle($cell)->getFill()->getStartColor()->getARGB();
-        $this->assertSame('FFDDEBF7', $fill('A3'));
-        $this->assertSame('FFDDEBF7', $fill('Y3'));
-        $this->assertSame('FFFFD966', $fill('G4'));
-        $this->assertSame('FFFFD966', $fill('AD4'));
-        $this->assertSame('FFFFD966', $fill('A5'));
-        $this->assertSame('FFFFD966', $fill('AG5'));
-        foreach (['A3', 'Y4', 'A5'] as $cell) {
-            $this->assertTrue($detail->getStyle($cell)->getFont()->getBold(), $cell);
-            $this->assertSame('thin', $detail->getStyle($cell)->getBorders()->getTop()->getBorderStyle(), $cell);
+        $this->assertEqualsCanonicalizing(['A3:A4', 'B3:B4', 'C3:C4', 'D3:D4', 'E3:E4', 'F3:F4', 'H3:H4', 'I3:K3', 'L3:L4', 'M3:M4', 'N3:N4', 'O3:P3', 'Q3:R3', 'T3:U3', 'V3:V4', 'W3:X3', 'Y3:AD3'], array_values($detail->getMergeCells()), 'ID, DURASI DOWNTIME and TOTAL to KETERANGAN are not merged.');
+        foreach ([1 => 15, 2 => 15.75, 3 => 33.75, 4 => 26.25, 5 => 18.75] as $row => $height) {
+            $this->assertEqualsWithDelta($height, $detail->getRowDimension($row)->getRowHeight(), 0.001, 'Row '.$row);
         }
         $this->assertSame('D6', $detail->getFreezePane());
-        $this->assertSame('A5:AG7', $detail->getAutoFilter()->getRange(), 'The filter covers the SID rows, not the TOTAL row.');
+        $this->assertSame('A5:AI7', $detail->getAutoFilter()->getRange(), 'The filter covers the SID rows, not the TOTAL row.');
         $this->assertSame([3, 5], $detail->getPageSetup()->getRowsToRepeatAtTop());
         $this->assertSame(PageSetup::PAPERSIZE_A3, $detail->getPageSetup()->getPaperSize());
         $this->assertSame('landscape', $detail->getPageSetup()->getOrientation());
         $book->disconnectWorksheets();
+    }
+
+    public function test_detail_layanan_header_fills_fonts_and_borders_follow_the_customer_sheet(): void
+    {
+        $book = $this->issuedWorkbook($this->issuedRevision());
+        $detail = $book->getSheetByName('Detail Layanan');
+
+        // Every header cell: Arial 12 bold black, centred, thin border, no wrap, on the fill of its row, unless listed here.
+        $style = fn (string $fill, string $font = 'Arial', int $size = 12, bool $bold = true, bool $wrap = false, string $color = 'FF000000') => [$fill, $font, $size, $bold, $wrap, $color];
+        $blue = 'FFD9E7FD';
+        $yellow = 'FFFDD868';
+        $expected = [
+            'A3' => $style('FFDAE9F8'), 'A4' => $style('FFDAE9F8'), 'B3' => $style($blue), 'C3' => $style($blue),
+            'D3' => $style('FFC9DAF8', 'Calibri'), 'E3' => $style($blue), 'F3' => $style($blue), 'G3' => $style($blue), 'H3' => $style($blue), 'I3' => $style($blue),
+            'L3' => $style($blue, 'Calibri'), 'M3' => $style($blue, 'Calibri', wrap: true), 'N3' => $style($blue, wrap: true),
+            'O3' => $style($blue, size: 11, wrap: true), 'Q3' => $style($blue, size: 11), 'S3' => $style($blue, wrap: true), 'T3' => $style($blue),
+            'V3' => $style('FFCFE2F3', 'Calibri', wrap: true), 'W3' => $style($blue), 'Y3' => $style($blue),
+            'AE3' => $style($blue), 'AF3' => $style($blue, wrap: true), 'AG3' => $style($blue, wrap: true), 'AH3' => $style($blue, wrap: true), 'AI3' => $style($blue, wrap: true),
+            'G4' => $style($yellow), 'I4' => $style($yellow), 'K4' => $style($yellow),
+            'O4' => $style($yellow, 'Calibri', 11), 'P4' => $style($yellow, size: 11), 'Q4' => $style($yellow, size: 11), 'R4' => $style($yellow, size: 11),
+            'S4' => $style($yellow), 'T4' => $style($yellow), 'U4' => $style($yellow),
+            'W4' => $style('FFFFD966', size: 11, wrap: true), 'X4' => $style($yellow, 'Calibri', wrap: true), 'Y4' => $style($yellow), 'AD4' => $style($yellow),
+            'AE4' => $style($yellow), 'AF4' => $style($yellow, wrap: true), 'AG4' => $style($yellow, wrap: true), 'AH4' => $style($yellow), 'AI4' => $style($yellow),
+            'A5' => $style('FFFFC000'), 'B5' => $style($yellow), 'D5' => $style($yellow, 'Calibri'), 'F5' => $style($yellow, bold: false),
+            'L5' => $style($yellow, 'Calibri'), 'M5' => $style($yellow, 'Calibri'), 'N5' => $style($yellow, bold: false, color: 'FF0000FF'),
+            'O5' => $style($yellow, 'Calibri', 11), 'P5' => $style($yellow, size: 11), 'Q5' => $style($yellow, size: 11), 'R5' => $style($yellow, size: 11),
+            'V5' => $style('FFFFD966'), 'Y5' => $style($yellow), 'AE5' => $style($yellow), 'AF5' => $style($yellow), 'AG5' => $style($yellow), 'AI5' => $style($yellow),
+        ];
+        foreach ($expected as $cell => $want) {
+            $look = $detail->getStyle($cell);
+            $this->assertEquals($want, [$look->getFill()->getStartColor()->getARGB(), $look->getFont()->getName(), $look->getFont()->getSize(), $look->getFont()->getBold(), $look->getAlignment()->getWrapText(), $look->getFont()->getColor()->getARGB()], $cell);
+            $this->assertSame('solid', $look->getFill()->getFillType(), $cell);
+        }
+        // All header cells (rows 3 to 5, A to AI) are centred both ways and have a thin border on every side.
+        foreach (range(3, 5) as $row) {
+            foreach (range(1, 35) as $column) {
+                $cell = Coordinate::stringFromColumnIndex($column).$row;
+                $look = $detail->getStyle($cell);
+                $this->assertSame(['center', 'center'], [$look->getAlignment()->getHorizontal(), $look->getAlignment()->getVertical()], $cell);
+                $this->assertSame(['thin', 'thin', 'thin', 'thin'], [$look->getBorders()->getTop()->getBorderStyle(), $look->getBorders()->getBottom()->getBorderStyle(), $look->getBorders()->getLeft()->getBorderStyle(), $look->getBorders()->getRight()->getBorderStyle()], $cell);
+            }
+        }
+        $this->assertSame('FFDDEBF7', $book->getSheetByName('Harga')->getStyle('K3')->getFill()->getStartColor()->getARGB(), 'The Harga header keeps its own look.');
+        $book->disconnectWorksheets();
+    }
+
+    public function test_detail_layanan_column_widths_follow_the_customer_sheet(): void
+    {
+        $book = $this->issuedWorkbook($this->issuedRevision());
+        $detail = $book->getSheetByName('Detail Layanan');
+        $widths = [
+            'A' => 6.46, 'B' => 17.6, 'C' => 96.46, 'D' => 24.6, 'E' => 26.73, 'F' => 14.4, 'G' => 24, 'H' => 11.13, 'I' => 14.46, 'J' => 14.46, 'K' => 16.4,
+            'L' => 22.86, 'M' => 17.27, 'N' => 25.86, 'O' => 12.86, 'P' => 12.86, 'Q' => 11.46, 'R' => 12.13, 'S' => 13.46, 'T' => 13.86, 'U' => 14.4, 'V' => 14.4,
+            'W' => 17.46, 'X' => 18.13, 'Y' => 16.86, 'Z' => 17, 'AA' => 19.46, 'AB' => 16.73, 'AC' => 12.46, 'AD' => 12.46, 'AE' => 16.86, 'AF' => 22.13, 'AG' => 17.86, 'AH' => 25.4, 'AI' => 19.6,
+        ];
+        foreach ($widths as $column => $width) {
+            $this->assertEqualsWithDelta($width, $detail->getColumnDimension($column)->getWidth(), 0.001, $column);
+        }
+        $book->disconnectWorksheets();
+    }
+
+    public function test_a_special_column_sits_after_eksisting_and_shifts_the_later_ones(): void
+    {
+        $revision = $this->issuedRevision(true);
+        $snapshot = $revision->snapshot;
+        $this->assertSame('70000.00', $snapshot['totals']['special_total']);
+        $this->assertSame(['70000.00', '0.00'], array_column($snapshot['lines'], 'special_total'));
+        $book = $this->issuedWorkbook($revision);
+        $detail = $book->getSheetByName('Detail Layanan');
+        $rows = $this->rows($detail);
+        $value = fn (string $cell) => $detail->getCell($cell)->getValue();
+        $this->assertSame('AJ', $detail->getHighestColumn());
+
+        // Y to AJ: the special column sits in Z, everything from Upgrade on is one letter further right.
+        $this->assertSame(['HARGA (Rp)', null, null, null, null, null, null, 'TOTAL', 'HARGA SETELAH RESTITUSI', 'SUB TOTAL PER CABANG', 'MIKROTIK/NONMIKROTIK', 'MIKROTIK/NONMIKROTIK'], array_slice($rows[3], 24, 12));
+        $this->assertSame(['Eksisting', self::SPECIAL, 'Upgrade (Prorate)', 'Downgrade (Prorate)', 'Cabut (Prorate)', 'PSB', 'Relokasi', 'TOTAL', 'HARGA SETELAH RESTITUSI', 'SUB TOTAL PER CABANG', 'MIKROTIK/NONMIKROTIK', 'KETERANGAN'], array_slice($rows[4], 24, 12));
+        $this->assertSame(['Y', 'Z', 'AA', 'AB', 'AC', 'AD', 'AE', null, null, 'AH', 'AI', 'AJ'], array_slice($rows[5], 24, 12));
+        $merged = array_values($detail->getMergeCells());
+        $this->assertContains('Y3:AE3', $merged, 'HARGA (Rp) covers the special column too.');
+        $this->assertNotContains('Y3:AD3', $merged);
+        $this->assertNotContains('AF3:AF4', $merged);
+        $this->assertSame('A5:AJ7', $detail->getAutoFilter()->getRange());
+        foreach (['AA' => 17, 'AB' => 19.46, 'AC' => 16.73, 'AD' => 12.46, 'AE' => 12.46, 'AF' => 16.86, 'AG' => 22.13, 'AH' => 17.86, 'AI' => 25.4, 'AJ' => 19.6, 'Z' => 29] as $column => $width) {
+            $this->assertEqualsWithDelta($width, $detail->getColumnDimension($column)->getWidth(), 0.001, $column);
+        }
+        $label = $detail->getStyle('Z4');
+        $this->assertEquals(['FF00FFFF', 'Arial', 9, true, true], [$label->getFill()->getStartColor()->getARGB(), $label->getFont()->getName(), $label->getFont()->getSize(), $label->getFont()->getBold(), $label->getAlignment()->getWrapText()]);
+        $this->assertSame('FF00FFFF', $detail->getStyle('Z5')->getFill()->getStartColor()->getARGB());
+        $this->assertSame('FFFDD868', $detail->getStyle('AA4')->getFill()->getStartColor()->getARGB());
+        $this->assertSame('FFFDD868', $detail->getStyle('AG5')->getFill()->getStartColor()->getARGB(), 'HARGA SETELAH RESTITUSI stays filled on row 5, without a letter.');
+
+        // The first SID is in the special column; the second is not, so its cell is empty.
+        [$first, $second] = $snapshot['lines'];
+        $this->assertSame('0012-ABC', $first['sid']);
+        $this->assertEquals(70000.0, $value('Z6'));
+        $this->assertNull($value('Z7'));
+        $this->assertSame(['#,##0', 'right'], [$detail->getStyle('Z6')->getNumberFormat()->getFormatCode(), $detail->getStyle('Z6')->getAlignment()->getHorizontal()]);
+        $this->assertSame('right', $detail->getStyle('Z7')->getAlignment()->getHorizontal());
+        $this->assertEquals((float) $first['charges']['existing'], $value('Y6'));
+        $this->assertEquals((float) $first['gross'], $value('AF6'), 'TOTAL includes the special column.');
+        $this->assertEqualsWithDelta($value('Y6') + $value('Z6'), $value('AF6'), 0.005);
+        $this->assertEquals((float) $first['net'], $value('AG6'));
+        $this->assertGreaterThan(0, $value('AA7'), 'Upgrade is one letter right of where it is without a special column.');
+        $this->assertNull($value('AA6'));
+        $this->assertEquals((float) $second['net'], $value('AG7'));
+        $this->assertEquals((float) $snapshot['totals']['branch_totals']['Cabang Test']['net'], $value('AH6'));
+        $this->assertNull($value('AH7'));
+        foreach (['AI6', 'AJ6', 'AI7', 'AJ7'] as $cell) {
+            $this->assertNull($value($cell), $cell.': the system has no Mikrotik data.');
+        }
+        $this->assertSame(['#,##0.00', '#,##0', '#,##0'], [$detail->getStyle('AF6')->getNumberFormat()->getFormatCode(), $detail->getStyle('AG6')->getNumberFormat()->getFormatCode(), $detail->getStyle('AH6')->getNumberFormat()->getFormatCode()]);
+        $this->assertSame('thin', $detail->getStyle('AJ7')->getBorders()->getBottom()->getBorderStyle());
+
+        // TOTAL row.
+        $t = $snapshot['totals'];
+        $this->assertEquals((float) $t['special_total'], $value('Z8'));
+        $this->assertEquals((float) $t['components']['existing'], $value('Y8'));
+        $this->assertEquals((float) $t['components']['upgrade'], $value('AA8'));
+        $this->assertEquals((float) $t['components']['relocation'], $value('AE8'));
+        $this->assertEquals((float) $t['gross'], $value('AF8'));
+        $this->assertEquals((float) $t['net_exact'], $value('AG8'));
+        $this->assertEquals((float) $t['net_exact'], $value('AH8'));
+        $this->assertEquals((float) $t['sla_credit'], $value('W8'));
+        $this->assertEqualsWithDelta($value('AG6') + $value('AG7'), $value('AG8'), 0.005);
+        $book->disconnectWorksheets();
+
+        // The saved file is checked with the shifted letters: the net column is AG, and the total of the special column must agree.
+        $this->assertNull($this->validationError($revision, $snapshot));
+        $tampered = $snapshot;
+        $tampered['totals']['net_exact'] = (string) BigDecimal::of($snapshot['totals']['net_exact'])->plus('1.00');
+        $this->assertSame('Total invoice rinci tidak sama dengan snapshot.', $this->validationError($revision, $tampered));
+        $tampered = $snapshot;
+        $tampered['totals']['special_columns'][0]['amount'] = '70001.00';
+        $this->assertSame('Total kolom spesial tidak sama dengan snapshot.', $this->validationError($revision, $tampered));
+    }
+
+    public function test_two_special_columns_sit_side_by_side_with_their_own_totals_and_summary_rows(): void
+    {
+        $snapshot = $this->issuedRevision(true)->snapshot;
+        $snapshot['lines'][1]['special']['Biaya kedua'] = '5000.00';
+        $snapshot['totals']['special_columns'][] = ['name' => 'Biaya kedua', 'summary' => 'Biaya kedua', 'amount' => '5000.00'];
+        $book = $this->reissue($snapshot);
+        $detail = $book->getSheetByName('Detail Layanan');
+        $value = fn (string $cell) => $detail->getCell($cell)->getValue();
+
+        $this->assertSame('AK', $detail->getHighestColumn());
+        $this->assertSame(['Eksisting', self::SPECIAL, 'Biaya kedua', 'Upgrade (Prorate)'], array_slice($this->rows($detail)[4], 24, 4));
+        $this->assertContains('Y3:AF3', array_values($detail->getMergeCells()));
+        $this->assertSame([70000.0, null, 70000.0], [$value('Z6'), $value('Z7'), $value('Z8')]);
+        $this->assertSame([null, 5000.0, 5000.0], [$value('AA6'), $value('AA7'), $value('AA8')]);
+        foreach (['Z4', 'AA4', 'Z5', 'AA5'] as $cell) {
+            $this->assertSame('FF00FFFF', $detail->getStyle($cell)->getFill()->getStartColor()->getARGB(), $cell);
+        }
+        $this->assertEqualsWithDelta(29, $detail->getColumnDimension('AA')->getWidth(), 0.001);
+
+        $labels = array_filter(array_column($this->rows($book->getSheetByName('Summary Invoice')), 1), fn ($label) => is_string($label) && preg_match('/^[KL]\. /', $label));
+        $this->assertSame(['K. Total Nilai Biaya contoh', 'L. Total Nilai Biaya kedua'], array_values($labels));
+        $book->disconnectWorksheets();
+    }
+
+    public function test_a_month_without_special_columns_has_none_and_ends_at_ai(): void
+    {
+        $snapshot = $this->issuedRevision()->snapshot;
+        $this->assertSame('0.00', $snapshot['totals']['special_total']);
+        // A snapshot frozen before special columns existed has none of these keys.
+        $older = $snapshot;
+        unset($older['totals']['special_total'], $older['totals']['special_columns']);
+        foreach ($older['lines'] as $i => $line) {
+            unset($older['lines'][$i]['special'], $older['lines'][$i]['special_total']);
+        }
+
+        foreach ([$snapshot, $older] as $s) {
+            $book = $this->reissue($s);
+            $detail = $book->getSheetByName('Detail Layanan');
+            $rows = $this->rows($detail);
+            $this->assertSame('AI', $detail->getHighestColumn());
+            $this->assertSame(['Eksisting', 'Upgrade (Prorate)', 'Downgrade (Prorate)', 'Cabut (Prorate)', 'PSB', 'Relokasi', 'TOTAL', 'HARGA SETELAH RESTITUSI', 'SUB TOTAL PER CABANG', 'MIKROTIK/NONMIKROTIK', 'KETERANGAN'], array_slice($rows[4], 24, 11));
+            $this->assertNotContains(self::SPECIAL, $rows[4]);
+            $this->assertContains('Y3:AD3', array_values($detail->getMergeCells()));
+            $this->assertSame('A5:AI7', $detail->getAutoFilter()->getRange());
+            $this->assertEquals((float) $s['totals']['net_exact'], $detail->getCell('AF8')->getValue());
+            $this->assertEquals((float) $s['totals']['gross'], $detail->getCell('AE8')->getValue());
+            $book->disconnectWorksheets();
+        }
     }
 
     public function test_detail_layanan_has_a_row_per_sid_then_a_total_row_that_ties_to_the_snapshot(): void
@@ -257,6 +459,7 @@ class ExcelOutputTest extends TestCase
         $this->assertNull($value('K6'));
         $this->assertNull($value('N6'));
         $this->assertNull($value('Z6'));
+        $this->assertSame([null, null], [$value('AH6'), $value('AI6')], 'MIKROTIK/NONMIKROTIK and KETERANGAN stay empty: the system has no such data.');
         // Upgraded SID: new bandwidth under Upgrade BW, effective date of the change, prorated upgrade charge.
         $this->assertSame(['UPGRADE', '00123456', '512 Kbps', '1 Mbps'], [$value('F7'), $value('G7'), $value('I7'), $value('J7')]);
         $this->assertNull($value('K7'));
@@ -280,6 +483,7 @@ class ExcelOutputTest extends TestCase
         $this->assertSame('FFC6EFCE', $detail->getStyle('B7')->getFill()->getStartColor()->getARGB());
         $this->assertTrue($detail->getStyle('C6')->getAlignment()->getWrapText());
         $this->assertSame('thin', $detail->getStyle('AG7')->getBorders()->getBottom()->getBorderStyle());
+        $this->assertSame('thin', $detail->getStyle('AI7')->getBorders()->getBottom()->getBorderStyle());
 
         // TOTAL row: the totals of the snapshot, not recomputed.
         $t = $snapshot['totals'];
@@ -363,18 +567,83 @@ class ExcelOutputTest extends TestCase
         $this->assertSame('A3:K7', $harga->getAutoFilter()->getRange());
         $this->assertSame(7, $harga->getHighestRow(), 'Four listed tariffs: the expired, the not yet valid and the inactive one are left out.');
 
-        // Sorted by service, category ("Semua kategori" first), bandwidth by speed, router.
-        $this->assertEquals(['Semua kategori', 'TELKOM VPN IP', '1 Mbps', 'Dengan router', 1350000.0, 2000000.0, 0.0], array_slice($rows[4], 0, 7));
-        $this->assertEquals(['KK', 'TELKOM VPN IP', '512 Kbps', 'Tanpa router', 2319819.0, 1981982.0, 0.0], array_slice($rows[5], 0, 7));
-        $this->assertEquals(['KK', 'TELKOM VPN IP', '1 Mbps', 'Tanpa router', 1300000.0, 1981982.0, 0.0], array_slice($rows[6], 0, 7));
-        $this->assertEquals(['KK', 'TELKOM VPN IP', '1 Mbps', 'Tanpa router', 1200000.0], array_slice($rows[7], 0, 5));
-        $this->assertSame([null, null, '0012-ABC'], [$rows[4][7], $rows[5][7], $rows[7][7]]);
-        $this->assertSame('01/01/2026', $harga->getCell('I4')->getFormattedValue());
-        $this->assertSame('01/01/2020', $harga->getCell('I5')->getFormattedValue());
+        // Sorted by the category name as shown ("Semua kategori" sorts by that name, so after KK), then service, bandwidth by speed, router, SID.
+        $this->assertEquals(['KK', 'TELKOM VPN IP', '512 Kbps', 'Tanpa router', 2319819.0, 1981982.0, 0.0], array_slice($rows[4], 0, 7));
+        $this->assertEquals(['KK', 'TELKOM VPN IP', '1 Mbps', 'Tanpa router', 1300000.0, 1981982.0, 0.0], array_slice($rows[5], 0, 7));
+        $this->assertEquals(['KK', 'TELKOM VPN IP', '1 Mbps', 'Tanpa router', 1200000.0], array_slice($rows[6], 0, 5));
+        $this->assertEquals(['Semua kategori', 'TELKOM VPN IP', '1 Mbps', 'Dengan router', 1350000.0, 2000000.0, 0.0], array_slice($rows[7], 0, 7));
+        $this->assertSame([null, null, '0012-ABC'], [$rows[4][7], $rows[7][7], $rows[6][7]]);
+        $this->assertSame('01/01/2020', $harga->getCell('I4')->getFormattedValue());
+        $this->assertSame('01/01/2026', $harga->getCell('I7')->getFormattedValue());
         $this->assertSame('#,##0', $harga->getStyle('E4')->getNumberFormat()->getFormatCode());
         $this->assertEmpty(array_filter(array_column($rows, 2), fn ($bandwidth) => $bandwidth === '2 Mbps'));
         $this->assertEmpty(array_filter(array_column($rows, 4), fn ($price) => in_array($price, [999001.0, 999002.0, 999003.0], true)));
         $book->disconnectWorksheets();
+    }
+
+    public function test_harga_rows_are_sorted_by_category_and_coloured_per_category(): void
+    {
+        $snapshot = $this->issuedRevision()->snapshot;
+        $kk = LocationCategory::where('location_category_name', 'KK')->firstOrFail();
+        $alpha = LocationCategory::create(['location_category_code' => 'AL', 'location_category_name' => 'alpha']);
+        $zulu = LocationCategory::create(['location_category_code' => 'ZU', 'location_category_name' => 'Zulu']);
+        // A category id one full palette round after KK has no name in the database, so it is shown as "Kategori #id".
+        $wrapped = $kk->id + count(self::CATEGORY_COLORS);
+        $template = collect($snapshot['tariffs'])->first(fn ($t) => $t['location_category_id'] !== null && empty($t['sid']) && empty($t['effective_end_date']) && $t['is_active']);
+        foreach ([$zulu->id, $alpha->id, $wrapped] as $id) {
+            $snapshot['tariffs'][] = [...$template, 'location_category_id' => $id];
+        }
+        $book = $this->reissue($snapshot);
+        $harga = $book->getSheetByName('Harga');
+        $rows = $this->rows($harga);
+        $color = fn (int $id) => 'FF'.self::CATEGORY_COLORS[($id - 1) % count(self::CATEGORY_COLORS)];
+        $fill = fn (string $cell) => $harga->getStyle($cell)->getFill()->getStartColor()->getARGB();
+
+        // Case-insensitive by the shown name ("alpha" before "Kategori #n" before "KK"); inside KK the old order stays.
+        $this->assertSame(10, $harga->getHighestRow());
+        $this->assertSame(['alpha', 'Kategori #'.$wrapped, 'KK', 'KK', 'KK', 'Semua kategori', 'Zulu'], array_column(array_slice($rows, 3, 7), 0));
+        $this->assertEquals([2319819.0, 1300000.0, 1200000.0], array_column(array_slice($rows, 5, 3), 4));
+
+        // Every column of a row has the colour of its category; the same category keeps one colour, different ones differ.
+        $expected = [4 => $color($alpha->id), 5 => $color($wrapped), 6 => $color($kk->id), 7 => $color($kk->id), 8 => $color($kk->id), 9 => 'FFEFEFEF', 10 => $color($zulu->id)];
+        foreach ($expected as $row => $argb) {
+            foreach (range('A', 'K') as $column) {
+                $this->assertSame($argb, $fill($column.$row), $column.$row);
+            }
+            $this->assertSame('solid', $harga->getStyle('A'.$row)->getFill()->getFillType());
+        }
+        $this->assertCount(4, array_unique([$fill('A4'), $fill('A6'), $fill('A9'), $fill('A10')]), 'alpha, KK, Semua kategori and Zulu differ.');
+        $this->assertSame($fill('A6'), $fill('A5'), 'A category id one palette round on has the same colour again.');
+        $this->assertSame('FFDDEBF7', $fill('A3'), 'The header keeps its own colour.');
+
+        // The colour follows the category id, not the position: without the alpha tariff KK keeps its colour.
+        $book->disconnectWorksheets();
+        $snapshot['tariffs'] = array_values(array_filter($snapshot['tariffs'], fn ($t) => $t['location_category_id'] !== $alpha->id));
+        $book = $this->reissue($snapshot);
+        $harga = $book->getSheetByName('Harga');
+        $this->assertSame('KK', $harga->getCell('A5')->getValue());
+        $this->assertSame($color($kk->id), $harga->getStyle('A5')->getFill()->getStartColor()->getARGB());
+        $book->disconnectWorksheets();
+    }
+
+    public function test_the_category_decides_the_harga_order_before_the_service(): void
+    {
+        $snapshot = $this->issuedRevision()->snapshot;
+        $alpha = LocationCategory::create(['location_category_code' => 'AL', 'location_category_name' => 'alpha']);
+        $zulu = LocationCategory::create(['location_category_code' => 'ZU', 'location_category_name' => 'Zulu']);
+        $first = Service::create(['service_code' => 'AAA', 'service_name' => 'AAA LAYANAN']);
+        $last = Service::create(['service_code' => 'ZZZ', 'service_name' => 'ZZZ LAYANAN']);
+        $template = collect($snapshot['tariffs'])->first(fn ($t) => $t['location_category_id'] !== null && empty($t['sid']) && empty($t['effective_end_date']) && $t['is_active']);
+        // Sorted by service first, these two rows would come out the other way round.
+        $snapshot['tariffs'] = [
+            [...$template, 'location_category_id' => $zulu->id, 'service_id' => $first->id],
+            [...$template, 'location_category_id' => $alpha->id, 'service_id' => $last->id],
+        ];
+        $book = $this->reissue($snapshot);
+        $rows = $this->rows($book->getSheetByName('Harga'));
+        $book->disconnectWorksheets();
+
+        $this->assertSame([['alpha', 'ZZZ LAYANAN'], ['Zulu', 'AAA LAYANAN']], array_map(fn ($row) => array_slice($row, 0, 2), array_slice($rows, 3, 2)));
     }
 
     public function test_harga_follows_the_calculation_snapshot_and_falls_back_to_master_harga(): void
@@ -386,14 +655,14 @@ class ExcelOutputTest extends TestCase
         // Master Harga changes after the invoice was calculated: a reissued file still shows the calculated tariffs.
         PriceMaster::query()->update(['monthly_price' => '1']);
         $book = $this->reissue($snapshot);
-        $this->assertEquals(2319819.0, $book->getSheetByName('Harga')->getCell('E5')->getValue());
+        $this->assertEquals(2319819.0, $book->getSheetByName('Harga')->getCell('E4')->getValue());
         $this->assertSame(7, $book->getSheetByName('Harga')->getHighestRow());
         $book->disconnectWorksheets();
 
         // A snapshot that holds no tariff list reads Master Harga.
         unset($snapshot['tariffs']);
         $book = $this->reissue($snapshot);
-        $this->assertEquals(1.0, $book->getSheetByName('Harga')->getCell('E5')->getValue());
+        $this->assertEquals(1.0, $book->getSheetByName('Harga')->getCell('E4')->getValue());
         $this->assertSame(7, $book->getSheetByName('Harga')->getHighestRow());
         $book->disconnectWorksheets();
 

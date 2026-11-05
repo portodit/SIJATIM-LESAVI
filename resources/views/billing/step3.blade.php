@@ -67,7 +67,7 @@
             </div>
         @else
             <div class="card rounded-xl p-6 mb-6 border-blue-300">
-                <h2 class="text-xl font-semibold">File Excel dan PDF sedang dibuat…</h2>
+                <h2 class="text-xl font-semibold">File Excel, PDF dan Word sedang dibuat…</h2>
                 <p class="text-gray-600 mt-1">Biasanya selesai dalam beberapa menit. Halaman ini akan diperbarui otomatis.</p>
                 <p class="text-xs text-gray-500 mt-3">Pembuat file dinyalakan otomatis oleh aplikasi. Jika lebih dari 5 menit belum selesai, klik "Coba buat file lagi" pada riwayat versi di bawah.</p>
             </div>
@@ -100,7 +100,7 @@
             <p class="text-sm text-gray-700">Setelah difinalisasi:</p>
             <ul class="list-disc ml-5 mt-2 space-y-1 text-sm text-gray-700">
                 <li>Data periode ini dikunci dan tidak bisa diubah.</li>
-                <li>File Excel dan PDF dibuat otomatis.</li>
+                <li>File Excel, PDF dan Word dibuat otomatis.</li>
                 <li>Perubahan setelahnya harus melalui revisi.</li>
             </ul>
             <form method="POST" action="{{ route('billing.finalize', $period) }}" class="flex justify-end gap-2 mt-6">

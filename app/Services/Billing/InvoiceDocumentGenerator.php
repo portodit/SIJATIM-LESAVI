@@ -40,9 +40,20 @@ final class InvoiceDocumentGenerator
 
     private const HEADER_BLUE = 'FFDDEBF7';
 
-    private const HEADER_YELLOW = 'FFFFD966';
-
     private const BRANCH_GREEN = 'FFC6EFCE';
+
+    /** Fills of the Detail Layanan header, as in the customer's sheet (RGB; the header code adds the alpha). */
+    private const DETAIL_HEAD_BLUE = 'D9E7FD';
+
+    private const DETAIL_HEAD_YELLOW = 'FDD868';
+
+    /** Row fills of Harga, one per location category (picked by category id, cycling), and the one for "Semua kategori". */
+    private const CATEGORY_COLORS = [
+        'FFF2CC', 'D9EAD3', 'CFE2F3', 'F4CCCC', 'D9D2E9', 'FCE5CD', 'D0E0E3', 'EAD1DC', 'C9DAF8', 'B6D7A8', 'FFE599', 'F9CB9C',
+        'A2C4C9', 'B4A7D6', 'D5A6BD', 'EA9999', '9FC5E8', 'A4C2F4', '93C47D', 'FFD966', 'F6B26B', '76A5AF', 'C27BA0', 'E6B8AF',
+    ];
+
+    private const NO_CATEGORY_COLOR = 'EFEFEF';
 
     /** Number formats (Excel shows them with the viewer's own separators, so Indonesian users see 1.234.567). */
     private const RUPIAH = '#,##0';
@@ -84,48 +95,56 @@ final class InvoiceDocumentGenerator
     ];
 
     /**
-     * Detail Layanan columns, in order: letter => [width, number format, horizontal alignment].
+     * Detail Layanan columns, in the order of the customer's sheet: key => [width, number format, horizontal alignment].
+     * The letters follow from the position (see detailColumns()), because the special columns exist only on some invoices.
+     * The keys of the price columns are the InvoiceCalculator components they show.
      *
-     * @var array<string, array{0: int, 1: ?string, 2: ?string}>
+     * @var array<string, array{0: float|int, 1: ?string, 2: ?string}>
      */
     private const DETAIL_COLUMNS = [
-        'A' => [6, '0', Alignment::HORIZONTAL_CENTER],
-        'B' => [18, null, null],
-        'C' => [60, null, Alignment::HORIZONTAL_LEFT],
-        'D' => [20, null, Alignment::HORIZONTAL_CENTER],
-        'E' => [18, null, Alignment::HORIZONTAL_CENTER],
-        'F' => [14, null, Alignment::HORIZONTAL_CENTER],
-        'G' => [22, '@', Alignment::HORIZONTAL_CENTER],
-        'H' => [9, '0', Alignment::HORIZONTAL_CENTER],
-        'I' => [13, null, Alignment::HORIZONTAL_CENTER],
-        'J' => [13, null, Alignment::HORIZONTAL_CENTER],
-        'K' => [13, null, Alignment::HORIZONTAL_CENTER],
-        'L' => [22, null, null],
-        'M' => [14, self::DATE, Alignment::HORIZONTAL_CENTER],
-        'N' => [22, self::DATE, Alignment::HORIZONTAL_CENTER],
-        'O' => [12, self::RUPIAH_CENTS, Alignment::HORIZONTAL_RIGHT],
-        'P' => [12, self::RUPIAH_CENTS, Alignment::HORIZONTAL_RIGHT],
-        'Q' => [12, self::RUPIAH_CENTS, Alignment::HORIZONTAL_RIGHT],
-        'R' => [12, self::RUPIAH_CENTS, Alignment::HORIZONTAL_RIGHT],
-        'S' => [12, '0', Alignment::HORIZONTAL_CENTER],
-        'T' => [11, self::PERCENT, Alignment::HORIZONTAL_CENTER],
-        'U' => [11, self::PERCENT, Alignment::HORIZONTAL_CENTER],
-        'V' => [14, '0', Alignment::HORIZONTAL_CENTER],
-        'W' => [14, self::RUPIAH, Alignment::HORIZONTAL_RIGHT],
-        'X' => [14, self::RUPIAH_CENTS, Alignment::HORIZONTAL_RIGHT],
-        'Y' => [15, self::RUPIAH, Alignment::HORIZONTAL_RIGHT],
-        'Z' => [15, self::RUPIAH, Alignment::HORIZONTAL_RIGHT],
-        'AA' => [15, self::RUPIAH, Alignment::HORIZONTAL_RIGHT],
-        'AB' => [15, self::RUPIAH, Alignment::HORIZONTAL_RIGHT],
-        'AC' => [15, self::RUPIAH, Alignment::HORIZONTAL_RIGHT],
-        'AD' => [15, self::RUPIAH, Alignment::HORIZONTAL_RIGHT],
-        'AE' => [16, self::RUPIAH_CENTS, Alignment::HORIZONTAL_RIGHT],
-        'AF' => [16, self::RUPIAH, Alignment::HORIZONTAL_RIGHT],
-        'AG' => [16, self::RUPIAH, Alignment::HORIZONTAL_RIGHT],
+        'number' => [6.46, '0', Alignment::HORIZONTAL_CENTER],
+        'branch' => [17.6, null, null],
+        'address' => [96.46, null, Alignment::HORIZONTAL_LEFT],
+        'category' => [24.6, null, Alignment::HORIZONTAL_CENTER],
+        'service' => [26.73, null, Alignment::HORIZONTAL_CENTER],
+        'order' => [14.4, null, Alignment::HORIZONTAL_CENTER],
+        'sid' => [24, '@', Alignment::HORIZONTAL_CENTER],
+        'period' => [11.13, '0', Alignment::HORIZONTAL_CENTER],
+        'bandwidth' => [14.46, null, Alignment::HORIZONTAL_CENTER],
+        'bandwidth_up' => [14.46, null, Alignment::HORIZONTAL_CENTER],
+        'bandwidth_down' => [16.4, null, Alignment::HORIZONTAL_CENTER],
+        'ip' => [22.86, null, null],
+        'activation' => [17.27, self::DATE, Alignment::HORIZONTAL_CENTER],
+        'change_date' => [25.86, self::DATE, Alignment::HORIZONTAL_CENTER],
+        'average' => [12.86, self::RUPIAH_CENTS, Alignment::HORIZONTAL_RIGHT],
+        'average_up' => [12.86, self::RUPIAH_CENTS, Alignment::HORIZONTAL_RIGHT],
+        'traffic' => [11.46, self::RUPIAH_CENTS, Alignment::HORIZONTAL_RIGHT],
+        'traffic_up' => [12.13, self::RUPIAH_CENTS, Alignment::HORIZONTAL_RIGHT],
+        'downtime' => [13.46, '0', Alignment::HORIZONTAL_CENTER],
+        'sla' => [13.86, self::PERCENT, Alignment::HORIZONTAL_CENTER],
+        'sla_target' => [14.4, self::PERCENT, Alignment::HORIZONTAL_CENTER],
+        'billing_seconds' => [14.4, '0', Alignment::HORIZONTAL_CENTER],
+        'sla_credit' => [17.46, self::RUPIAH, Alignment::HORIZONTAL_RIGHT],
+        'manual_credit' => [18.13, self::RUPIAH_CENTS, Alignment::HORIZONTAL_RIGHT],
+        'existing' => [16.86, self::RUPIAH, Alignment::HORIZONTAL_RIGHT],
+        'upgrade' => [17, self::RUPIAH, Alignment::HORIZONTAL_RIGHT],
+        'downgrade' => [19.46, self::RUPIAH, Alignment::HORIZONTAL_RIGHT],
+        'termination' => [16.73, self::RUPIAH, Alignment::HORIZONTAL_RIGHT],
+        'installation' => [12.46, self::RUPIAH, Alignment::HORIZONTAL_RIGHT],
+        // The customer's width here (9.27) would show #### for a total.
+        'relocation' => [12.46, self::RUPIAH, Alignment::HORIZONTAL_RIGHT],
+        'gross' => [16.86, self::RUPIAH_CENTS, Alignment::HORIZONTAL_RIGHT],
+        'net' => [22.13, self::RUPIAH, Alignment::HORIZONTAL_RIGHT],
+        'branch_total' => [17.86, self::RUPIAH, Alignment::HORIZONTAL_RIGHT],
+        'mikrotik' => [25.4, null, null],
+        'note' => [19.6, null, null],
     ];
 
-    /** The price columns of Detail Layanan and the InvoiceCalculator component each one shows. */
-    private const CHARGE_COLUMNS = ['Y' => 'existing', 'Z' => 'upgrade', 'AA' => 'downgrade', 'AB' => 'termination', 'AC' => 'installation', 'AD' => 'relocation'];
+    /** Width, number format and alignment of a special column; they sit right after the Eksisting price, keyed special_0, special_1, ... */
+    private const SPECIAL_COLUMN = [29, self::RUPIAH, Alignment::HORIZONTAL_RIGHT];
+
+    /** The InvoiceCalculator components shown as price columns of Detail Layanan (the keys of DETAIL_COLUMNS). */
+    private const CHARGE_COMPONENTS = ['existing', 'upgrade', 'downgrade', 'termination', 'installation', 'relocation'];
 
     private const ORDER_LABELS = ['EXISTING' => 'EKSISTING', 'PASANG_BARU' => 'PSB', 'RELOKASI' => 'RELOKASI', 'UPGRADE' => 'UPGRADE', 'DOWNGRADE' => 'DOWNGRADE', 'PEMUTUSAN' => 'CABUT'];
 
@@ -156,7 +175,9 @@ final class InvoiceDocumentGenerator
             $disk->move($folder.'/'.$token.'.pdf', $pdfPath);
             // The summary picture is a convenience: failing to draw it must not block the invoice documents.
             $pngPath = $this->renderSummary($s, $folder, $token);
-            DB::transaction(function () use ($revision, $s, $disk, $xlsx, $pdfPath, $pngPath) {
+            // So is the Word version: Excel and PDF are still issued, and it can be created later from the snapshot.
+            $docxPath = $this->renderWord($s, $revision->version, $folder, $token);
+            DB::transaction(function () use ($revision, $s, $disk, $xlsx, $pdfPath, $pngPath, $docxPath) {
                 if (DB::connection()->getDriverName() === 'sqlite') {
                     DB::update('UPDATE invoice_periods SET input_version = input_version WHERE id = ?', [$revision->invoice_period_id]);
                 }
@@ -164,6 +185,9 @@ final class InvoiceDocumentGenerator
                 $r = InvoiceRevision::whereKey($revision->id)->lockForUpdate()->firstOrFail();
                 $name = fn (string $prefix, string $extension) => $prefix.'_'.$s['period']['code'].'_v'.$r->version.'.'.$extension;
                 $files = ['excel_invoice' => [$xlsx, $name('Invoice', 'xlsx')], 'pdf_cetak' => [$pdfPath, $name('Invoice', 'pdf')]];
+                if ($docxPath) {
+                    $files['docx_cetak'] = [$docxPath, $name('Invoice', 'docx')];
+                }
                 if ($pngPath) {
                     $files['summary_png'] = [$pngPath, $name('Ringkasan', 'png')];
                 }
@@ -245,6 +269,64 @@ final class InvoiceDocumentGenerator
         ]);
     }
 
+    /**
+     * Writes the Word version next to the other documents; returns its storage path, or null when it could not be made.
+     */
+    private function renderWord(array $snapshot, int $version, string $folder, string $token): ?string
+    {
+        $disk = Storage::disk('local');
+        $tmp = $disk->path($folder.'/'.$token.'.docx');
+        try {
+            (new InvoiceWordDocument)->render($snapshot, $version, $tmp);
+            $final = $folder.'/invoice.docx';
+            if ($disk->exists($final)) {
+                $disk->delete($final);
+            }
+            $disk->move($folder.'/'.$token.'.docx', $final);
+
+            return $final;
+        } catch (\Throwable $e) {
+            Log::warning('Dokumen Word invoice gagal dibuat: '.$e->getMessage());
+
+            return null;
+        } finally {
+            if (is_file($tmp)) {
+                unlink($tmp);
+            }
+        }
+    }
+
+    /**
+     * Creates the Word file for an invoice version that is already issued (older versions have none).
+     * It is drawn from the frozen snapshot, so it always agrees with the Excel and PDF files, which stay as they are.
+     */
+    public function addWordDocument(InvoiceRevision $revision): InvoiceOutput
+    {
+        if ($revision->status !== 'ready') {
+            throw new \RuntimeException('Versi invoice belum siap.');
+        }
+        $disk = Storage::disk('local');
+        $existing = $revision->outputs()->where('output_type', 'docx_cetak')->first();
+        if ($existing && $disk->exists($existing->file_path) && hash_file('sha256', $disk->path($existing->file_path)) === $existing->file_hash) {
+            return $existing;
+        }
+        if (hash('sha256', json_encode($revision->snapshot, JSON_THROW_ON_ERROR)) !== $revision->snapshot_hash) {
+            throw new \RuntimeException('Hash snapshot invoice tidak cocok.');
+        }
+        $folder = 'billing/invoices/'.$revision->invoice_id.'/v'.$revision->version;
+        $disk->makeDirectory($folder);
+        $path = $this->renderWord($revision->snapshot, $revision->version, $folder, bin2hex(random_bytes(6)));
+        if (! $path) {
+            throw new \RuntimeException('Dokumen Word tidak dapat dibuat. Lihat log aplikasi untuk penyebabnya.');
+        }
+
+        return InvoiceOutput::updateOrCreate(['invoice_revision_id' => $revision->id, 'output_type' => 'docx_cetak'], [
+            'invoice_period_id' => $revision->invoice_period_id, 'file_name' => 'Invoice_'.$revision->snapshot['period']['code'].'_v'.$revision->version.'.docx',
+            'file_path' => $path, 'file_hash' => hash_file('sha256', $disk->path($path)), 'file_size' => $disk->size($path),
+            'status' => 'final', 'version' => $revision->version, 'generated_by' => $revision->approved_by,
+        ]);
+    }
+
     private function validateImage(string $path): void
     {
         $info = @getimagesize($path);
@@ -296,9 +378,11 @@ final class InvoiceDocumentGenerator
             }
         }
         foreach ($rows as $i => $row) {
+            $r = $headerRow + 1 + $i;
             foreach ($keys as $c => $key) {
-                $this->cell($sheet, $c + 1, $headerRow + 1 + $i, $row[$key] ?? null);
+                $this->cell($sheet, $c + 1, $r, $row[$key] ?? null);
             }
+            $sheet->getStyle('A'.$r.':'.$last.$r)->getFill()->setFillType(Fill::FILL_SOLID)->getStartColor()->setARGB('FF'.self::categoryColor($row['category_id']));
         }
         $sheet->getStyle('A'.$headerRow.':'.$last.$lastRow)->getBorders()->getAllBorders()->setBorderStyle(Border::BORDER_THIN);
         if ($rows) {
@@ -312,7 +396,8 @@ final class InvoiceDocumentGenerator
 
     /**
      * The tariffs that were calculated with (the snapshot keeps them, so a reissued file matches the calculation);
-     * Master Harga is read only for a snapshot that predates that. Sorted by service, category, bandwidth and router.
+     * Master Harga is read only for a snapshot that predates that. Sorted by the category name as shown, then service,
+     * bandwidth, router, start date and SID.
      *
      * @return list<array<string, mixed>>
      */
@@ -335,19 +420,33 @@ final class InvoiceDocumentGenerator
             $service = $services[$t['service_id']] ?? 'Layanan #'.$t['service_id'];
             $bandwidth = ($t['bandwidth_option_id'] ?? null) === null ? null : $bandwidths->get($t['bandwidth_option_id']);
             $router = $t['router_mode'] ?? 'none';
+            $category ??= 'Semua kategori';
             $rows[] = [
-                'category' => $category ?? 'Semua kategori', 'service' => $service,
+                'category' => $category, 'category_id' => $t['location_category_id'], 'service' => $service,
                 'bandwidth' => ($t['bandwidth_option_id'] ?? null) === null ? 'Tidak berlaku' : ($bandwidth?->bandwidth_name ?? 'Bandwidth #'.$t['bandwidth_option_id']),
                 'router' => self::routerLabel($router),
                 'monthly' => self::numeric($t['monthly_price'] ?? null), 'installation' => self::numeric($t['installation_price'] ?? null), 'relocation' => self::numeric($t['relocation_price'] ?? null),
                 'sid' => $t['sid'] ?? null, 'start' => self::date($start), 'end' => self::date($end),
                 'contract' => $t['contract']['contract_number'] ?? $t['addendum_reference'] ?? null,
-                'order' => [mb_strtolower($service), mb_strtolower($category ?? ''), (int) ($bandwidth?->value_kbps ?? -1), $router === 'none' ? 0 : 1, $start, (string) ($t['sid'] ?? '')],
+                'order' => [mb_strtolower($category), mb_strtolower($service), (int) ($bandwidth?->value_kbps ?? -1), $router === 'none' ? 0 : 1, $start, (string) ($t['sid'] ?? '')],
             ];
         }
         usort($rows, fn ($a, $b) => $a['order'] <=> $b['order']);
 
         return $rows;
+    }
+
+    /**
+     * Row colour of a location category on Harga (RGB): the same category keeps its colour in every month.
+     */
+    private static function categoryColor(?int $categoryId): string
+    {
+        if ($categoryId === null) {
+            return self::NO_CATEGORY_COLOR;
+        }
+        $count = count(self::CATEGORY_COLORS);
+
+        return self::CATEGORY_COLORS[(($categoryId - 1) % $count + $count) % $count];
     }
 
     /**
@@ -362,46 +461,53 @@ final class InvoiceDocumentGenerator
         $first = self::DETAIL_FIRST_ROW;
         $lastData = $first + count($lines) - 1;
         $totalRow = self::detailTotalRow(count($lines));
-        $last = array_key_last(self::DETAIL_COLUMNS);
-        $letters = array_keys(self::DETAIL_COLUMNS);
+        $col = self::detailColumns($s);
+        $last = Coordinate::stringFromColumnIndex(count($col));
 
         if (! empty($s['metadata']['is_preview'])) {
             $this->cell($sheet, 3, 1, 'DRAFT - BELUM DIFINALISASI');
             $sheet->getStyle('C1')->getFont()->setBold(true)->getColor()->setARGB(self::RED);
         }
         $this->cell($sheet, 2, 2, "\u{2022} TELKOM - MONTHLY RECURRING CHARGES");
-        $sheet->getStyle('B2')->getFont()->setBold(true);
-        $this->detailHeader($sheet, $s);
-        foreach ($letters as $c => $letter) {
-            $this->cell($sheet, $c + 1, 5, $letter);
-            $sheet->getColumnDimension($letter)->setWidth(self::DETAIL_COLUMNS[$letter][0]);
+        $sheet->getStyle('B2')->getFont()->setBold(true)->setName('Calibri')->setSize(12);
+        $sheet->getStyle('B2')->getAlignment()->setVertical(Alignment::VERTICAL_CENTER);
+        $this->detailHeader($sheet, $s, $col);
+        foreach ($col as $key => $letter) {
+            $sheet->getColumnDimension($letter)->setWidth((self::DETAIL_COLUMNS[$key] ?? self::SPECIAL_COLUMN)[0]);
         }
-        $this->headerStyle($sheet, 'A5:'.$last.'5', self::HEADER_YELLOW);
 
         $seen = [];
         foreach ($lines as $i => $line) {
             $branchStart = ! isset($seen[$line['branch']]);
             $seen[$line['branch']] = true;
-            foreach ($this->detailValues($line, $s, $branchStart) as $letter => $value) {
-                $this->cell($sheet, Coordinate::columnIndexFromString($letter), $first + $i, $value);
+            foreach ($this->detailValues($line, $s, $branchStart) as $key => $value) {
+                if (isset($col[$key])) {
+                    $this->cell($sheet, Coordinate::columnIndexFromString($col[$key]), $first + $i, $value);
+                }
             }
         }
 
         // The TOTAL row repeats the totals of the snapshot (rounding, PPN and grand total are on Summary Invoice).
         $t = $s['totals'];
-        $totals = ['W' => $t['sla_credit'], 'X' => $t['manual_credit'], 'AE' => $t['gross'], 'AF' => $t['net_exact'], 'AG' => $t['net_exact']];
-        foreach (self::CHARGE_COLUMNS as $letter => $component) {
-            $totals[$letter] = $t['components'][$component] ?? null;
+        $totals = ['sla_credit' => $t['sla_credit'], 'manual_credit' => $t['manual_credit'], 'gross' => $t['gross'], 'net' => $t['net_exact'], 'branch_total' => $t['net_exact']];
+        foreach (self::CHARGE_COMPONENTS as $component) {
+            $totals[$component] = $t['components'][$component] ?? null;
+        }
+        foreach (array_values($t['special_columns'] ?? []) as $i => $column) {
+            $totals['special_'.$i] = $column['amount'];
         }
         $this->cell($sheet, 3, $totalRow, 'TOTAL');
-        foreach ($totals as $letter => $value) {
-            $this->cell($sheet, Coordinate::columnIndexFromString($letter), $totalRow, self::numeric($value));
+        foreach ($totals as $key => $value) {
+            if (isset($col[$key])) {
+                $this->cell($sheet, Coordinate::columnIndexFromString($col[$key]), $totalRow, self::numeric($value));
+            }
         }
 
         $body = 'A'.$first.':'.$last.$totalRow;
         $sheet->getStyle($body)->getBorders()->getAllBorders()->setBorderStyle(Border::BORDER_THIN);
         $sheet->getStyle($body)->getAlignment()->setVertical(Alignment::VERTICAL_CENTER);
-        foreach (self::DETAIL_COLUMNS as $letter => [, $format, $align]) {
+        foreach ($col as $key => $letter) {
+            [, $format, $align] = self::DETAIL_COLUMNS[$key] ?? self::SPECIAL_COLUMN;
             $column = $sheet->getStyle($letter.$first.':'.$letter.$totalRow);
             if ($format !== null) {
                 $column->getNumberFormat()->setFormatCode($format);
@@ -426,59 +532,149 @@ final class InvoiceDocumentGenerator
     }
 
     /**
-     * The two header rows (3 and 4): a group title merged across its sub-columns, or down both rows when it has no sub-header.
-     * The column letters follow on row 5.
+     * The header rows 1 to 5 as in the customer's sheet: row 3 holds the titles (merged down over row 4, or across the
+     * columns of a group), row 4 the sub-headers and row 5 the column letters. Style options per cell: see headerCellStyle().
+     *
+     * @param  array<string, string>  $col  column key => letter
      */
-    private function detailHeader(Worksheet $sheet, array $s): void
+    private function detailHeader(Worksheet $sheet, array $s, array $col): void
     {
-        $last = array_key_last(self::DETAIL_COLUMNS);
-        $this->headerStyle($sheet, 'A3:'.$last.'4', self::HEADER_BLUE);
-        $sheet->getRowDimension(3)->setRowHeight(30);
-        $sheet->getRowDimension(4)->setRowHeight(30);
-        $groups = [
-            ['A', 'A', 'NO.', null],
-            ['B', 'B', 'JENIS KANTOR', null],
-            ['C', 'C', 'ALAMAT', null],
-            ['D', 'D', 'KATEGORI LOKASI', null],
-            ['E', 'E', 'LAYANAN', null],
-            ['F', 'F', 'TYPE ORDER', null],
-            ['G', 'G', 'ID', ['SID '.mb_strtoupper($s['period']['name'])]],
-            ['H', 'H', 'PERIOD', null],
-            ['I', 'K', 'Bandwidth', ['Eksisting BW', 'Upgrade BW', 'Downgrade BW']],
-            ['L', 'L', 'IP Host Telkom', null],
-            ['M', 'M', 'TANGGAL AKTIVASI', null],
-            ['N', 'N', 'TANGGAL MULAI AKTIF LAYANAN (UPGRADE/DOWNGRADE)', null],
-            ['O', 'P', 'PEMAKAIAN AVERAGE (Kbps)', ['Eksisting', 'Upgrade']],
-            ['Q', 'R', 'TRAFFIK TOTAL (GB)', ['Eksisting', 'Upgrade']],
-            ['S', 'S', 'DURASI DOWNTIME (Detik)', null],
-            ['T', 'U', 'SLA', ['SLA ACTUAL', 'SLA PKS']],
-            ['V', 'V', 'AVAILABILITY (Detik/bulan)', null],
-            ['W', 'X', 'RESTITUSI (Rp)', ['Restitusi Over SLA', 'Restitusi Tagihan']],
-            ['Y', 'AD', 'HARGA (Rp)', ['Eksisting', 'Upgrade (Prorate)', 'Downgrade (Prorate)', 'Cabut (Prorate)', 'PSB', 'Relokasi']],
-            ['AE', 'AE', 'TOTAL', null],
-            ['AF', 'AF', 'HARGA SETELAH RESTITUSI', null],
-            ['AG', 'AG', 'SUB TOTAL PER CABANG', null],
-        ];
-        foreach ($groups as [$from, $to, $title, $subHeaders]) {
-            $column = Coordinate::columnIndexFromString($from);
-            $this->cell($sheet, $column, 3, $title);
-            if ($subHeaders === null) {
-                $sheet->mergeCells($from.'3:'.$to.'4');
+        foreach ([1 => 15, 2 => 15.75, 3 => 33.75, 4 => 26.25, 5 => 18.75] as $row => $height) {
+            $sheet->getRowDimension($row)->setRowHeight($height);
+        }
+        $wrap = ['wrap' => true];
+        $calibri = ['font' => 'Calibri'];
 
-                continue;
-            }
-            if ($from !== $to) {
+        // Row 3: [first column, last column, title, merged down over row 4, style]; a group of several columns is merged across row 3.
+        $titles = [
+            ['number', 'number', 'NO.', true, ['fill' => 'DAE9F8']],
+            ['branch', 'branch', 'JENIS KANTOR', true, []],
+            ['address', 'address', 'ALAMAT', true, []],
+            ['category', 'category', 'KATEGORI LOKASI', true, ['fill' => 'C9DAF8'] + $calibri],
+            ['service', 'service', 'LAYANAN', true, []],
+            ['order', 'order', 'TYPE ORDER', true, []],
+            ['sid', 'sid', 'ID', false, []],
+            ['period', 'period', 'PERIOD', true, []],
+            ['bandwidth', 'bandwidth_down', 'Bandwidth', false, []],
+            ['ip', 'ip', 'IP Host Telkom', true, $calibri],
+            ['activation', 'activation', 'TANGGAL AKTIVASI', true, $calibri + $wrap],
+            ['change_date', 'change_date', 'TANGGAL MULAI AKTIF LAYANAN  (UPGRADE/DOWNGRADE/ MANAGE SERVICE)', true, $wrap],
+            ['average', 'average_up', "PEMAKAIAN AVERAGE\n (Kbps)", false, ['size' => 11] + $wrap],
+            // The customer's title says Kbps, but the numbers in these columns are GB.
+            ['traffic', 'traffic_up', 'TRAFFIK TOTAL (GB)', false, ['size' => 11]],
+            ['downtime', 'downtime', 'DURASI DOWNTIME', false, $wrap],
+            ['sla', 'sla_target', 'SLA', false, []],
+            ['billing_seconds', 'billing_seconds', 'AVAILABILITY (Detik/bulan)', true, ['fill' => 'CFE2F3'] + $calibri + $wrap],
+            ['sla_credit', 'manual_credit', 'RESTITUSI (Rp)', false, []],
+            ['existing', 'relocation', 'HARGA (Rp)', false, []],
+            ['gross', 'gross', 'TOTAL', false, []],
+            ['net', 'net', 'HARGA SETELAH RESTITUSI', false, $wrap],
+            ['branch_total', 'branch_total', 'SUB TOTAL PER CABANG', false, $wrap],
+            ['mikrotik', 'mikrotik', 'MIKROTIK/NONMIKROTIK', false, $wrap],
+            ['note', 'note', 'MIKROTIK/NONMIKROTIK', false, $wrap],
+        ];
+        foreach ($titles as [$from, $to, $title, $down, $style]) {
+            [$from, $to] = [$col[$from], $col[$to]];
+            $this->cell($sheet, Coordinate::columnIndexFromString($from), 3, $title);
+            if ($down) {
+                $sheet->mergeCells($from.'3:'.$to.'4');
+            } elseif ($from !== $to) {
                 $sheet->mergeCells($from.'3:'.$to.'3');
             }
-            foreach ($subHeaders as $i => $subHeader) {
-                $this->cell($sheet, $column + $i, 4, $subHeader);
+            $this->headerCellStyle($sheet, $from.'3:'.$to.($down ? '4' : '3'), self::DETAIL_HEAD_BLUE, $style);
+        }
+
+        // Row 4: [column, text, style], only for the cells that are not part of a title merged down.
+        $size = ['size' => 11];
+        $subHeaders = [
+            ['sid', 'SID '.mb_strtoupper($s['period']['name']), []],
+            ['bandwidth', 'Eksisting BW', []],
+            ['bandwidth_up', 'Upgrade BW', []],
+            ['bandwidth_down', 'Downgrade BW', []],
+            ['average', 'Eksisting', $calibri + $size],
+            ['average_up', 'Upgrade', $size],
+            ['traffic', 'Eksisting', $size],
+            ['traffic_up', 'Upgrade', $size],
+            ['downtime', '(Detik)', []],
+            ['sla', 'SLA ACTUAL', []],
+            ['sla_target', 'SLA PKS', []],
+            ['sla_credit', 'Restitusi Over SLA', ['fill' => 'FFD966'] + $size + $wrap],
+            ['manual_credit', 'Restitusi Tagihan', $calibri + $wrap],
+            ['existing', 'Eksisting', []],
+            ['upgrade', 'Upgrade (Prorate)', []],
+            ['downgrade', 'Downgrade (Prorate)', []],
+            ['termination', 'Cabut (Prorate)', []],
+            ['installation', 'PSB', []],
+            ['relocation', 'Relokasi', []],
+            ['gross', 'TOTAL', []],
+            ['net', 'HARGA SETELAH RESTITUSI', $wrap],
+            ['branch_total', 'SUB TOTAL PER CABANG', $wrap],
+            ['mikrotik', 'MIKROTIK/NONMIKROTIK', []],
+            ['note', 'KETERANGAN', []],
+        ];
+        foreach (array_values($s['totals']['special_columns'] ?? []) as $i => $column) {
+            $subHeaders[] = ['special_'.$i, $column['name'], ['fill' => '00FFFF', 'size' => 9] + $wrap];
+        }
+        foreach ($subHeaders as [$key, $text, $style]) {
+            if (isset($col[$key])) {
+                $this->cell($sheet, Coordinate::columnIndexFromString($col[$key]), 4, $text);
+                $this->headerCellStyle($sheet, $col[$key].'4', self::DETAIL_HEAD_YELLOW, $style);
             }
-            $sheet->getStyle($from.'4:'.$to.'4')->getFill()->setFillType(Fill::FILL_SOLID)->getStartColor()->setARGB(self::HEADER_YELLOW);
+        }
+
+        // Row 5: the column letters; TOTAL and HARGA SETELAH RESTITUSI keep the fill but no letter.
+        $letterStyles = [
+            'number' => ['fill' => 'FFC000'], 'category' => $calibri, 'order' => ['bold' => false], 'ip' => $calibri, 'activation' => $calibri,
+            'change_date' => ['bold' => false, 'color' => '0000FF'], 'average' => $calibri + $size, 'average_up' => $size, 'traffic' => $size, 'traffic_up' => $size,
+            'billing_seconds' => ['fill' => 'FFD966'],
+        ];
+        foreach ($col as $key => $letter) {
+            $this->headerCellStyle($sheet, $letter.'5', self::DETAIL_HEAD_YELLOW, $letterStyles[$key] ?? (isset(self::DETAIL_COLUMNS[$key]) ? [] : ['fill' => '00FFFF']));
+            if ($key !== 'gross' && $key !== 'net') {
+                $this->cell($sheet, Coordinate::columnIndexFromString($letter), 5, $letter);
+            }
         }
     }
 
     /**
-     * @return array<string, mixed> values of one SID row by column letter
+     * A Detail Layanan header cell (or range): Arial 12 bold black on a solid fill, centred, thin border all round, no wrap.
+     * The options change this per cell: fill, color (RGB), font (name), size, bold, wrap.
+     *
+     * @param  array{fill?: string, color?: string, font?: string, size?: int, bold?: bool, wrap?: bool}  $options
+     */
+    private function headerCellStyle(Worksheet $sheet, string $range, string $fill, array $options): void
+    {
+        $sheet->getStyle($range)->applyFromArray([
+            'font' => ['name' => $options['font'] ?? 'Arial', 'size' => $options['size'] ?? 12, 'bold' => $options['bold'] ?? true, 'color' => ['argb' => 'FF'.($options['color'] ?? '000000')]],
+            'fill' => ['fillType' => Fill::FILL_SOLID, 'startColor' => ['argb' => 'FF'.($options['fill'] ?? $fill)]],
+            'alignment' => ['horizontal' => Alignment::HORIZONTAL_CENTER, 'vertical' => Alignment::VERTICAL_CENTER, 'wrapText' => $options['wrap'] ?? false],
+            'borders' => ['allBorders' => ['borderStyle' => Border::BORDER_THIN]],
+        ]);
+    }
+
+    /**
+     * Letter of every Detail Layanan column of this snapshot. The special columns of the invoice sit right after the Eksisting
+     * price; each one moves the columns after it one place to the right.
+     *
+     * @return array<string, string> column key => letter
+     */
+    private static function detailColumns(array $s): array
+    {
+        $keys = [];
+        foreach (array_keys(self::DETAIL_COLUMNS) as $key) {
+            $keys[] = $key;
+            if ($key === 'existing') {
+                foreach (array_keys(array_values($s['totals']['special_columns'] ?? [])) as $i) {
+                    $keys[] = 'special_'.$i;
+                }
+            }
+        }
+
+        return array_combine($keys, array_map(Coordinate::stringFromColumnIndex(...), range(1, count($keys))));
+    }
+
+    /**
+     * @return array<string, mixed> values of one SID row by column key
      */
     private function detailValues(array $l, array $s, bool $branchStart): array
     {
@@ -495,22 +691,26 @@ final class InvoiceDocumentGenerator
             }
         }
         $values = [
-            'A' => $l['number'], 'B' => $l['branch'], 'C' => $l['address'], 'D' => $l['category'], 'E' => $l['service'], 'F' => self::orderLabel($l),
-            'G' => (string) $l['sid'], 'H' => (int) $s['period']['year'] * 100 + (int) $s['period']['month'],
-            'I' => $l['bandwidth'], 'J' => in_array('upgrade', $types, true) ? $newBandwidth : null, 'K' => in_array('downgrade', $types, true) ? $newBandwidth : null,
-            'L' => $service['ip'] ?? null, 'M' => self::date($service['activation_date'] ?? null), 'N' => self::date($changeDate),
-            'O' => self::numeric($traffic['average_kbps'] ?? null), 'Q' => self::numeric($traffic['volume_gb'] ?? null),
-            'S' => $l['downtime_seconds'] ?? null, 'T' => self::numeric($l['sla'] ?? null), 'U' => self::numeric($l['sla_target'] ?? null), 'V' => $l['billing_seconds'] ?? null,
-            'W' => self::numeric($l['sla_credit'] ?? null), 'X' => self::numeric($l['manual_credit'] ?? null),
+            'number' => $l['number'], 'branch' => $l['branch'], 'address' => $l['address'], 'category' => $l['category'], 'service' => $l['service'], 'order' => self::orderLabel($l),
+            'sid' => (string) $l['sid'], 'period' => (int) $s['period']['year'] * 100 + (int) $s['period']['month'],
+            'bandwidth' => $l['bandwidth'], 'bandwidth_up' => in_array('upgrade', $types, true) ? $newBandwidth : null, 'bandwidth_down' => in_array('downgrade', $types, true) ? $newBandwidth : null,
+            'ip' => $service['ip'] ?? null, 'activation' => self::date($service['activation_date'] ?? null), 'change_date' => self::date($changeDate),
+            'average' => self::numeric($traffic['average_kbps'] ?? null), 'traffic' => self::numeric($traffic['volume_gb'] ?? null),
+            'downtime' => $l['downtime_seconds'] ?? null, 'sla' => self::numeric($l['sla'] ?? null), 'sla_target' => self::numeric($l['sla_target'] ?? null), 'billing_seconds' => $l['billing_seconds'] ?? null,
+            'sla_credit' => self::numeric($l['sla_credit'] ?? null), 'manual_credit' => self::numeric($l['manual_credit'] ?? null),
         ];
-        foreach (self::CHARGE_COLUMNS as $letter => $component) {
+        foreach (self::CHARGE_COMPONENTS as $component) {
             $amount = self::numeric($l['charges'][$component] ?? null);
             // Only the existing charge always shows its number; the others stay empty when nothing is charged.
-            $values[$letter] = $letter === 'Y' || ($amount !== null && $amount != 0.0) ? $amount : null;
+            $values[$component] = $component === 'existing' || ($amount !== null && $amount != 0.0) ? $amount : null;
         }
-        $values['AE'] = self::numeric($l['gross'] ?? null);
-        $values['AF'] = self::numeric($l['net'] ?? null);
-        $values['AG'] = $branchStart ? self::numeric($s['totals']['branch_totals'][$l['branch']]['net'] ?? null) : null;
+        // A line that is not in a special column leaves its cell empty.
+        foreach (array_values($s['totals']['special_columns'] ?? []) as $i => $column) {
+            $values['special_'.$i] = self::numeric($l['special'][$column['name']] ?? null);
+        }
+        $values['gross'] = self::numeric($l['gross'] ?? null);
+        $values['net'] = self::numeric($l['net'] ?? null);
+        $values['branch_total'] = $branchStart ? self::numeric($s['totals']['branch_totals'][$l['branch']]['net'] ?? null) : null;
 
         return $values;
     }
@@ -587,6 +787,10 @@ final class InvoiceDocumentGenerator
                 case 'sla':
                     // G and H count locations, I and J are amounts.
                     $sheet->mergeCells('B'.$r.':C'.$r);
+                    // The name of a special column comes from the operator and can be long.
+                    if (str_starts_with($row['key'] ?? '', 'special_')) {
+                        $sheet->getStyle('B'.$r)->getAlignment()->setShrinkToFit(true);
+                    }
                     $isCount = isset($row['points']);
                     $this->cell($sheet, 4, $r, $isCount ? $row['points'] : self::numeric($row['amount']));
                     $sheet->getStyle('D'.$r)->getNumberFormat()->setFormatCode($isCount ? '0' : self::SUMMARY_RUPIAH);
@@ -682,7 +886,8 @@ final class InvoiceDocumentGenerator
 
     /**
      * Reads the saved files back: sheet names, no external links or formulas, and the money cells against the snapshot
-     * (Detail Layanan: AF of the TOTAL row and the sum of the AF cells above it equal net_exact; Summary Invoice:
+     * (Detail Layanan: the HARGA SETELAH RESTITUSI cell of the TOTAL row and the sum of the cells above it equal net_exact,
+     * and the TOTAL row of each special column equals its total; Summary Invoice:
      * the grand total in column D equals the one in the summary picture).
      */
     private function validateFiles(string $xlsx, string $pdf, array $snapshot): void
@@ -718,12 +923,20 @@ final class InvoiceDocumentGenerator
         if ($totals['grand_total'] !== null) {
             $detail = $cells(2);
             $totalRow = self::detailTotalRow(count($snapshot['lines']));
-            if (! isset($detail['AF'.$totalRow]) || ! $money($detail['AF'.$totalRow])->isEqualTo($totals['net_exact'])) {
+            $col = self::detailColumns($snapshot);
+            $net = $col['net'];
+            if (! isset($detail[$net.$totalRow]) || ! $money($detail[$net.$totalRow])->isEqualTo($totals['net_exact'])) {
                 throw new \RuntimeException('Total invoice rinci tidak sama dengan snapshot.');
+            }
+            foreach (array_values($totals['special_columns'] ?? []) as $i => $column) {
+                $cell = $col['special_'.$i].$totalRow;
+                if (! isset($detail[$cell]) || ! $money($detail[$cell])->isEqualTo($column['amount'])) {
+                    throw new \RuntimeException('Total kolom spesial tidak sama dengan snapshot.');
+                }
             }
             $sum = BigDecimal::of(0);
             for ($r = self::DETAIL_FIRST_ROW; $r < $totalRow; $r++) {
-                $sum = $sum->plus($money($detail['AF'.$r] ?? '0'));
+                $sum = $sum->plus($money($detail[$net.$r] ?? '0'));
             }
             if (! $sum->isEqualTo($totals['net_exact'])) {
                 throw new \RuntimeException('Jumlah baris rinci tidak sama dengan total snapshot.');

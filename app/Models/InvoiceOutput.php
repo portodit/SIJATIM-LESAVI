@@ -40,6 +40,8 @@ class InvoiceOutput extends Model
 
     public const TYPE_SUMMARY_PNG = 'summary_png';
 
+    public const TYPE_DOCX_CETAK = 'docx_cetak';
+
     /**
      * Name shown on download buttons.
      */
@@ -48,6 +50,7 @@ class InvoiceOutput extends Model
         return match ($this->output_type) {
             self::TYPE_EXCEL_INVOICE => 'Excel',
             self::TYPE_PDF_CETAK => 'PDF',
+            self::TYPE_DOCX_CETAK => 'Word',
             self::TYPE_SUMMARY_PNG => 'Ringkasan (PNG)',
             default => ucfirst(str_replace('_', ' ', $this->output_type)),
         };

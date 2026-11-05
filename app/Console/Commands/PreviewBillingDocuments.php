@@ -6,6 +6,7 @@ use App\Jobs\GenerateInvoiceDocuments;
 use App\Models\InvoicePeriod;
 use App\Services\Billing\InvoiceCalculator;
 use App\Services\Billing\InvoiceDocumentGenerator;
+use App\Services\Billing\InvoiceWordDocument;
 use Dompdf\Dompdf;
 use Dompdf\Options;
 use Illuminate\Console\Command;
@@ -33,6 +34,7 @@ class PreviewBillingDocuments extends Command
         $pdf->render();
         $pdf->getCanvas()->page_text(760, 566, 'DRAFT - {PAGE_NUM}', $pdf->getFontMetrics()->getFont('DejaVu Sans', 'bold'), 10, [0.9, 0, 0.18]);
         file_put_contents($directory.'/draft.pdf', $pdf->output());
+        (new InvoiceWordDocument)->render($s, 0, $directory.'/draft.docx');
         $this->line($directory);
 
         return self::SUCCESS;

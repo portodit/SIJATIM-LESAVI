@@ -321,6 +321,43 @@
 @endunless
 
 <div class="card rounded-xl p-6 mb-6">
+    <h2 class="font-semibold text-lg mb-1">Kolom spesial</h2>
+    <p class="text-sm text-gray-600 mb-3">Biaya tambahan per SSID yang hanya berlaku di invoice bulan ini. Nilainya menambah tagihan dan ikut kena PPN, dan tampil sebagai kolom sendiri di Excel, PDF, dan Word, serta sebagai baris sendiri di ringkasan.</p>
+    @foreach ($specialColumns as $name => $rows)
+        <div class="py-3 border-t border-gray-100 text-sm">
+            <p class="font-semibold">{{ $name }}</p>
+            <p>{{ number_format($rows->count(), 0, ',', '.') }} SSID · <x-sij.money :value="$rows->sum('amount')" /> · di ringkasan: {{ $rows->first()->getAttribute('attributes')['summary'] }}</p>
+            <p class="text-gray-500">{{ $rows->first()->reason }} · {{ $rows->first()->reference }}</p>
+            <details class="mt-2">
+                <summary class="cursor-pointer text-gray-600">Lihat daftar SSID</summary>
+                <textarea class="input mt-2 font-mono text-xs" rows="6" readonly>{{ $rows->pluck('sid')->implode("\n") }}</textarea>
+            </details>
+            @unless ($locked)
+                <form method="POST" action="{{ route('billing.special-columns.remove', $period) }}" class="flex gap-2 mt-2">
+                    @csrf
+                    <input type="hidden" name="column" value="{{ $name }}">
+                    <input class="input" name="reason" required placeholder="Alasan menghapus kolom">
+                    <button class="btn btn-secondary whitespace-nowrap">Hapus kolom</button>
+                </form>
+            @endunless
+        </div>
+    @endforeach
+    @unless ($locked)
+        <form method="POST" action="{{ route('billing.special-columns', $period) }}" class="mt-3 pt-4 border-t border-gray-100 space-y-3 max-w-2xl">
+            @csrf
+            <input class="input" name="column" required maxlength="60" placeholder="Nama kolom, maksimal 60 karakter" value="{{ old('column') }}">
+            <input class="input" name="summary" maxlength="45" placeholder="Nama di ringkasan, maksimal 45 karakter (boleh kosong kalau nama kolom sudah cukup pendek)" value="{{ old('summary') }}">
+            <input class="input" name="amount" required placeholder="Nilai per SSID, misalnya 70000" value="{{ old('amount') }}">
+            <textarea class="input" name="sids" required rows="6" placeholder="Daftar SSID, satu per baris (bisa ditempel dari Excel)">{{ old('sids') }}</textarea>
+            <input class="input" name="reference" required placeholder="Referensi pendukung" value="{{ old('reference') }}">
+            <textarea class="input" name="reason" required placeholder="Alasan">{{ old('reason') }}</textarea>
+            <p class="text-xs text-gray-500">Menyimpan dengan nama kolom yang sudah ada akan mengganti nilai dan daftar SSID-nya.</p>
+            <button class="btn btn-primary">Simpan kolom spesial</button>
+        </form>
+    @endunless
+</div>
+
+<div class="card rounded-xl p-6 mb-6">
     <h2 class="font-semibold text-lg mb-3">Perubahan layanan & penyesuaian periode ini</h2>
     @forelse ($events as $event)
         <p class="text-sm py-2 border-t border-gray-100">
@@ -330,7 +367,7 @@
     @empty
         <p class="text-sm text-gray-500">Belum ada perubahan layanan.</p>
     @endforelse
-    @foreach ($adjustments as $adjustment)
+    @foreach ($adjustments->where('kind', '!=', \App\Services\Billing\InvoiceCalculator::SPECIAL_COLUMN) as $adjustment)
         <div class="py-2 border-t border-gray-100 text-sm">
             <p>{{ $adjustment->sid }} · {{ $adjustment->kind === 'manual_credit' ? 'Kredit manual' : 'Override tarif' }} · <x-sij.money :value="$adjustment->amount" /> · {{ $adjustment->reason }} · {{ $adjustment->reference }}</p>
             @unless ($locked)

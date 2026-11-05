@@ -121,7 +121,7 @@ class SummaryImageTest extends TestCase
         return $revision->fresh();
     }
 
-    public function test_new_versions_get_the_picture_as_a_third_download_and_it_is_shown_on_the_publish_page(): void
+    public function test_new_versions_get_the_picture_as_a_download_and_it_is_shown_on_the_publish_page(): void
     {
         $revision = $this->issuedRevision();
         $this->assertSame('ready', $revision->status);
@@ -158,7 +158,7 @@ class SummaryImageTest extends TestCase
         $this->assertSame(1, $revision->outputs()->where('output_type', 'summary_png')->count());
         $this->assertSame($hash, $revision->outputs()->where('output_type', 'summary_png')->value('file_hash'));
         $this->assertSame($excelHash, $revision->outputs()->where('output_type', 'excel_invoice')->value('file_hash'));
-        $this->assertSame(3, InvoiceOutput::where('invoice_revision_id', $revision->id)->count());
+        $this->assertSame(4, InvoiceOutput::where('invoice_revision_id', $revision->id)->count());
     }
 
     public function test_the_picture_is_refused_for_a_version_whose_files_are_not_ready(): void

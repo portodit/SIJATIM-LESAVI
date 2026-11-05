@@ -2,13 +2,13 @@
 
 ## Tentang
 
-SIJATIM adalah aplikasi invoice layanan Telkom untuk Bank Jatim. Aplikasi ini menghitung tagihan bulanan per SSID, lalu membuat file invoice (Excel, PDF, dan gambar ringkasan PNG).
+SIJATIM adalah aplikasi invoice layanan Telkom untuk Bank Jatim. Aplikasi ini menghitung tagihan bulanan per SSID, lalu membuat file invoice (Excel, PDF, Word, dan gambar ringkasan PNG).
 
 Operator bekerja dalam 3 langkah per periode:
 
 1. **Layanan & Downtime**: isi data SSID, perubahan layanan (upgrade, downgrade, PSB, relokasi, cabut), dan downtime.
 2. **Periksa & Hitung**: cek daftar masalah, lalu klik **Hitung Invoice**.
-3. **Terbitkan**: **Finalisasi & buat file** mengunci periode dan membuat file Excel, PDF, dan gambar ringkasan.
+3. **Terbitkan**: **Finalisasi & buat file** mengunci periode dan membuat file Excel, PDF, Word, dan gambar ringkasan.
 
 Stack: Laravel 13, Blade + Tailwind (Vite), Livewire/Jetstream untuk login, SQLite, antrean (queue) di database.
 
@@ -100,7 +100,7 @@ Vite (hanya saat mengubah tampilan):
 npm run dev
 ```
 
-**Kenapa perlu worker?** Setelah **Finalisasi & buat file**, file Excel, PDF, dan gambar ringkasan dibuat oleh job antrean (`GenerateInvoiceDocuments`). Tanpa worker, periode terkunci tetapi file tidak pernah jadi. Secara bawaan aplikasi juga mencoba menjalankan worker sekali-jalan sendiri (`BILLING_AUTO_WORKER=true`), jadi di komputer lokal biasanya cukup `php artisan serve`. Kalau file tidak muncul, jalankan worker di atas.
+**Kenapa perlu worker?** Setelah **Finalisasi & buat file**, file Excel, PDF, Word, dan gambar ringkasan dibuat oleh job antrean (`GenerateInvoiceDocuments`). Tanpa worker, periode terkunci tetapi file tidak pernah jadi. Secara bawaan aplikasi juga mencoba menjalankan worker sekali-jalan sendiri (`BILLING_AUTO_WORKER=true`), jadi di komputer lokal biasanya cukup `php artisan serve`. Kalau file tidak muncul, jalankan worker di atas.
 
 Opsi `.env` lain (`BILLING_AUTO_WORKER`, `BILLING_WORKER_MEMORY_MB`, `DB_BUSY_TIMEOUT`, `DB_QUEUE_RETRY_AFTER`) dijelaskan di blok SIJATIM pada `.env.example`.
 

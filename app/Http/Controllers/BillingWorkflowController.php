@@ -210,7 +210,7 @@ class BillingWorkflowController extends Controller
         return view('billing.advanced', [
             'title' => 'Menu Lanjutan', 'period' => $period, 'step' => null,
             'batches' => $period->importBatches()->latest()->get(), 'outages' => $outages,
-            'events' => $period->serviceEvents()->orderBy('effective_date')->get(), 'adjustments' => $period->adjustments()->get(),
+            'events' => $period->serviceEvents()->orderBy('effective_date')->get(), 'adjustments' => $period->adjustments()->get(), 'specialColumns' => $this->specialColumns($period),
             'profiles' => BillingProfile::orderByDesc('version')->get(),
             'metadata' => array_merge($period->billingProfile?->settings ?? [], $period->invoice_metadata ?? []),
             'result' => $result, 'issues' => collect($period->readinessIssues()),
@@ -1022,13 +1022,79 @@ class BillingWorkflowController extends Controller
         return back()->with('success', 'Penyesuaian ditarik.');
     }
 
+    /**
+     * Saves a special column of this invoice: a name and one amount for a pasted list of SSIDs. Saving a name that exists replaces
+     * its amount and list. Nothing is saved when an SSID is not in the period.
+     */
+    public function specialColumn(Request $request, InvoicePeriod $invoicePeriod)
+    {
+        abort_if($invoicePeriod->isLocked(), 423, 'Periode sudah terkunci. Buat revisi untuk mengubah input.');
+        $d = $request->validate([
+            'column' => 'required|string|max:60', 'summary' => 'nullable|string|max:45', 'amount' => 'required|string|max:50',
+            'sids' => 'required|string', 'reason' => 'required|string|min:3|max:2000', 'reference' => 'required|string|max:255',
+        ]);
+        $oneLine = fn (?string $text) => trim((string) preg_replace('/\s+/u', ' ', (string) $text));
+        $name = $oneLine($d['column']);
+        $summary = $oneLine($d['summary'] ?? null) ?: $name;
+        if (mb_strlen($summary) > 45) {
+            return back()->withErrors(['summary' => 'Nama kolom lebih dari 45 karakter, jadi nama di ringkasan wajib diisi.'])->withInput();
+        }
+        try {
+            $amount = SourceValue::number($d['amount']);
+        } catch (\InvalidArgumentException $e) {
+            return back()->withErrors(['amount' => $e->getMessage()])->withInput();
+        }
+        if ($amount === null || (float) $amount <= 0) {
+            return back()->withErrors(['amount' => 'Nilai per SSID harus lebih dari 0.'])->withInput();
+        }
+        $sids = array_values(array_unique(array_filter(preg_split('/[\s,;]+/', $d['sids']))));
+        $known = $invoicePeriod->lines()->with('bankJatimLink')->get()->map->billingSid()->all();
+        $unknown = array_values(array_diff($sids, $known));
+        if ($unknown) {
+            return back()->withErrors(['sids' => count($unknown).' SSID tidak ada di periode ini, jadi belum ada yang disimpan: '.implode(', ', array_slice($unknown, 0, 10)).(count($unknown) > 10 ? ', ...' : '')])->withInput();
+        }
+        DB::transaction(function () use ($invoicePeriod, $name, $summary, $amount, $sids, $d) {
+            $this->specialColumns($invoicePeriod)->get($name, collect())->each->delete();
+            foreach ($sids as $sid) {
+                InvoiceAdjustment::create(['invoice_period_id' => $invoicePeriod->id, 'sid' => $sid, 'kind' => InvoiceCalculator::SPECIAL_COLUMN, 'amount' => $amount, 'reason' => $d['reason'], 'reference' => $d['reference'], 'attributes' => ['column' => $name, 'summary' => $summary], 'created_by' => auth()->id()]);
+            }
+            $invoicePeriod->markInputsChanged('special_column_saved', ['column' => $name, 'count' => count($sids), 'amount_each' => $amount]);
+        });
+
+        return back()->with('success', 'Kolom spesial disimpan untuk '.count($sids).' SSID. Klik Hitung ulang di langkah 2.');
+    }
+
+    public function removeSpecialColumn(Request $request, InvoicePeriod $invoicePeriod)
+    {
+        abort_if($invoicePeriod->isLocked(), 423, 'Periode sudah terkunci. Buat revisi untuk mengubah input.');
+        $d = $request->validate(['column' => 'required|string', 'reason' => 'required|string|min:3|max:2000']);
+        $rows = $this->specialColumns($invoicePeriod)->get($d['column']);
+        abort_unless($rows, 404);
+        DB::transaction(function () use ($invoicePeriod, $rows, $d) {
+            $rows->each->delete();
+            $invoicePeriod->markInputsChanged('special_column_removed', ['column' => $d['column'], 'sids' => $rows->pluck('sid')->all(), 'amount_total' => (string) $rows->sum('amount'), 'reason' => $d['reason']]);
+        });
+
+        return back()->with('success', 'Kolom spesial dihapus. Klik Hitung ulang di langkah 2.');
+    }
+
+    /**
+     * The rows of each special column of the period, by column name, in the order they were entered.
+     *
+     * @return Collection<string, \Illuminate\Database\Eloquent\Collection<int, InvoiceAdjustment>>
+     */
+    private function specialColumns(InvoicePeriod $period): Collection
+    {
+        return $period->adjustments()->where('kind', InvoiceCalculator::SPECIAL_COLUMN)->orderBy('id')->get()->groupBy(fn ($row) => $row->getAttribute('attributes')['column'])->toBase();
+    }
+
     public function finalize(Request $request, InvoicePeriod $invoicePeriod, InvoiceFinalizer $finalizer, QueueWorker $worker)
     {
         $d = $request->validate(['input_version' => 'required|integer']);
         $revision = $finalizer->finalize($invoicePeriod, $d['input_version'], auth()->id());
         $worker->ensureRunning();
 
-        return $request->expectsJson() ? response()->json(['revision_id' => $revision->id, 'status' => $revision->status], 202) : redirect()->route('invoice-periods.step3', $invoicePeriod)->with('success', 'Invoice dikunci. File Excel dan PDF sedang dibuat.');
+        return $request->expectsJson() ? response()->json(['revision_id' => $revision->id, 'status' => $revision->status], 202) : redirect()->route('invoice-periods.step3', $invoicePeriod)->with('success', 'Invoice dikunci. File Excel, PDF dan Word sedang dibuat.');
     }
 
     public function revise(Request $request, InvoicePeriod $invoicePeriod, InvoiceFinalizer $finalizer)
@@ -1061,6 +1127,21 @@ class BillingWorkflowController extends Controller
         }
 
         return back()->with('success', 'Gambar ringkasan siap diunduh.');
+    }
+
+    /**
+     * Creates the Word file for an issued version that does not have one yet.
+     */
+    public function wordDocument(InvoiceRevision $revision, InvoiceDocumentGenerator $documents)
+    {
+        abort_unless($revision->status === 'ready', 422, 'File Word hanya dibuat untuk versi yang file-nya sudah siap.');
+        try {
+            $documents->addWordDocument($revision);
+        } catch (\Throwable $e) {
+            return back()->withErrors(['word' => 'File Word gagal dibuat: '.$e->getMessage()]);
+        }
+
+        return back()->with('success', 'File Word siap diunduh.');
     }
 
     public function download(InvoiceOutput $output)

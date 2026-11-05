@@ -209,6 +209,9 @@
                     @foreach ($totals['components'] as $component => $amount)
                         <p class="flex justify-between border-b border-gray-100 py-1.5"><span>{{ $componentLabels[$component] ?? $component }}</span><x-sij.money :value="$amount" /></p>
                     @endforeach
+                    @foreach ($totals['special_columns'] ?? [] as $column)
+                        <p class="flex justify-between border-b border-gray-100 py-1.5"><span>{{ $column['name'] }}</span><x-sij.money :value="$column['amount']" /></p>
+                    @endforeach
                     <p class="flex justify-between border-b border-gray-100 py-1.5 font-semibold"><span>Tagihan sebelum potongan</span><x-sij.money :value="$totals['gross']" /></p>
                 </div>
                 <div>

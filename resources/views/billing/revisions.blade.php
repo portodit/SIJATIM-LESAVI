@@ -31,6 +31,12 @@
                             <button class="btn btn-secondary">Buat gambar ringkasan (PNG)</button>
                         </form>
                     @endunless
+                    @unless ($revision->outputs->contains('output_type', 'docx_cetak'))
+                        <form method="POST" action="{{ route('billing.word-document', $revision) }}">
+                            @csrf
+                            <button class="btn btn-secondary">Buat file Word</button>
+                        </form>
+                    @endunless
                 @endif
                 @if (in_array($revision->status, ['failed', 'approved']) || ($revision->status === 'generating' && $revision->generation_started_at?->lt(now()->subMinutes(6))))
                     <form method="POST" action="{{ route('billing.retry', $revision) }}">
